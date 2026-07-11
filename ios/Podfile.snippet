@@ -1,0 +1,55 @@
+###############################################################################
+# Transparent Fit — Podfile additions
+#
+# This is a reference snippet to merge into the standard React Native Podfile
+# that gets generated when you run `npx react-native init`. Don't replace the
+# generated Podfile wholesale — modify the existing one to look like this.
+###############################################################################
+
+require_relative '../node_modules/react-native/scripts/react_native_pods'
+require_relative '../node_modules/@react-native-community/cli-platform-ios/native_modules'
+
+platform :ios, '14.0'   # Vision person segmentation requires iOS 15+, but RN's min is 14
+prepare_react_native_project!
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+target 'TransparentFit' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    :hermes_enabled => true,
+    :fabric_enabled => false,   # New architecture — enable when libs catch up
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  # Permissions handling (optional helper for clearer iOS permission flow)
+  # pod 'Permission-Camera', :path => "#{permissions_path}/Camera"
+
+  post_install do |installer|
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false
+    )
+
+    # Ensure deployment target across all Pods is at least 14.0
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+      end
+    end
+  end
+end
+
+# NOTE: After modifying this file run:
+#   cd ios && pod install
+#
+# The native Swift modules (PersonSegmenter, PoseDetector) live under
+# ios/TransparentFit/ and are picked up automatically because they're in the
+# Xcode project — no Podfile entry needed for them.

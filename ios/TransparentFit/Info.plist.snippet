@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist additions for Transparent Fit.
+
+  These keys MUST be merged into ios/TransparentFit/Info.plist or the app will
+  crash on first camera / photo library access. Apple rejects apps that touch
+  these APIs without explanatory strings.
+
+  This file is a reference snippet — copy the <key>/<string> pairs into the
+  real Info.plist.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>Transparent Fit uses your camera to show how clothes look on you in real time. Photos are processed locally and never sent anywhere.</string>
+
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Transparent Fit can use a photo from your library as a body reference if you don't want to use the live camera.</string>
+
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Transparent Fit saves your try-on snapshots to your photo library so you can revisit them later.</string>
+
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Not used. Vision Camera requires this key on iOS even when audio is disabled.</string>
+</dict>
+</plist>

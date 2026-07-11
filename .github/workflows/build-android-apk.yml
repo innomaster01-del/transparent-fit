@@ -1,0 +1,82 @@
+##############################################################################
+# Build an installable Android APK in the cloud — no Android Studio needed.
+#
+# HOW TO USE (one-time setup):
+#   1. Create a repo on github.com and upload this whole project folder
+#   2. Go to the repo → "Actions" tab → "Build Android APK" → "Run workflow"
+#   3. Wait ~10-15 minutes
+#   4. Download "TransparentFit-APK" from the run's Artifacts section
+#   5. Copy app-release.apk to your phone and install it
+#      (you may need to allow "install from unknown sources")
+#
+# The workflow also runs automatically on every push to main.
+##############################################################################
+
+name: Build Android APK
+
+on:
+  workflow_dispatch:        # manual "Run workflow" button
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'android/**'
+      - 'App.tsx'
+      - 'index.js'
+      - 'package.json'
+      - '.github/workflows/build-android-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+
+      - name: Install JS dependencies
+        run: npm install --no-audit --no-fund
+        env:
+          CI: true
+
+      - name: Generate debug keystore (used to sign the APK)
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/app/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Transparent Fit Debug,O=TransparentFit,C=IL"
+
+      - name: Build release APK
+        run: gradle -p android assembleRelease --no-daemon
+        env:
+          CI: true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TransparentFit-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
