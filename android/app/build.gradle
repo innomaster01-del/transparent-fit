@@ -3,11 +3,12 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 /**
- * React Native Gradle plugin config.
- * Autolinking picks up every RN dependency in package.json automatically.
+ * React Native Gradle plugin config. Left at defaults.
+ * On RN 0.74.x, autolinking of native modules is wired via
+ * applyNativeModulesAppBuildGradle(project) at the bottom of this file
+ * (and applyNativeModulesSettingsGradle in settings.gradle).
  */
 react {
-    autolinkLibrariesWithApp()
 }
 
 /**
@@ -74,3 +75,6 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// RN 0.74 autolinking for the app module (links vision-camera, skia, reanimated, etc.)
+apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)
