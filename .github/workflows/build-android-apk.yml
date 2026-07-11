@@ -61,6 +61,21 @@ jobs:
         env:
           CI: true
 
+      - name: Emit diagnostics as annotations (readable via API without auth)
+        run: |
+          RN_VER=$(node -e "console.log(require('react-native/package.json').version)" 2>&1 || echo MISSING)
+          echo "::warning::RN_VERSION=$RN_VER"
+          GP_VER=$(node -e "console.log(require('@react-native/gradle-plugin/package.json').version)" 2>&1 || echo MISSING)
+          echo "::warning::GRADLE_PLUGIN_VERSION=$GP_VER"
+          RS=$(find node_modules/@react-native/gradle-plugin -iname "*ReactSettings*" 2>/dev/null | head -5 | tr '\n' '~')
+          echo "::warning::REACTSETTINGS_FILES=${RS:-none}"
+          CLI=$(ls node_modules/@react-native-community/ 2>/dev/null | tr '\n' '~')
+          echo "::warning::RN_COMMUNITY_SCOPE=${CLI:-none}"
+          GPKG=$(ls node_modules/@react-native/gradle-plugin/ 2>/dev/null | tr '\n' '~')
+          echo "::warning::GRADLE_PLUGIN_DIR=${GPKG:-none}"
+          SETTINGS=$(cat android/settings.gradle | tr '\n' '~')
+          echo "::warning::SETTINGS_GRADLE=${SETTINGS}"
+
       - name: Generate debug keystore (used to sign the APK)
         run: |
           keytool -genkeypair -v \
