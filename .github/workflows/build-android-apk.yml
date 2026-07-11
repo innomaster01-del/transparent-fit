@@ -61,17 +61,6 @@ jobs:
         env:
           CI: true
 
-      - name: DEBUG - inspect gradle-plugin install
-        run: |
-          echo "--- node_modules/@react-native ---"
-          ls -la node_modules/@react-native/ || echo "MISSING @react-native scope"
-          echo "--- gradle-plugin dir ---"
-          ls -la node_modules/@react-native/gradle-plugin/ 2>&1 || echo "MISSING gradle-plugin"
-          echo "--- react-native's own package.json gradle-plugin dep ---"
-          node -e "console.log(require('react-native/package.json').dependencies['@react-native/gradle-plugin'])" || echo "no such dep field"
-          echo "--- installed react-native version ---"
-          node -e "console.log(require('react-native/package.json').version)"
-
       - name: Generate debug keystore (used to sign the APK)
         run: |
           keytool -genkeypair -v \
@@ -83,7 +72,20 @@ jobs:
             -dname "CN=Transparent Fit Debug,O=TransparentFit,C=IL"
 
       - name: Build release APK
-        run: gradle -p android assembleRelease --no-daemon
+        run: |
+          echo "=================== DIAGNOSTICS ==================="
+          echo "--- installed react-native version ---"
+          node -e "console.log(require('react-native/package.json').version)" || echo "RN MISSING"
+          echo "--- @react-native/gradle-plugin dir ---"
+          ls -la node_modules/@react-native/gradle-plugin/ 2>&1 | head -20 || echo "MISSING gradle-plugin"
+          echo "--- gradle-plugin package.json version ---"
+          node -e "console.log(require('@react-native/gradle-plugin/package.json').version)" 2>&1 || echo "no gradle-plugin package.json"
+          echo "--- does ReactSettingsExtension source exist? ---"
+          find node_modules/@react-native/gradle-plugin -iname "*ReactSettings*" 2>&1 || echo "not found"
+          echo "--- android/settings.gradle ---"
+          cat android/settings.gradle
+          echo "=================== END DIAGNOSTICS ==================="
+          gradle -p android assembleRelease --no-daemon --stacktrace
         env:
           CI: true
 
