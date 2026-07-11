@@ -92,13 +92,9 @@ jobs:
           gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
           STATUS=${PIPESTATUS[0]}
           if [ "$STATUS" -ne 0 ]; then
-            echo "=== build failed, emitting error lines as annotations ==="
-            grep -nE "FAILURE:|What went wrong|Caused by|> Task .*FAILED|^e: |error: |A problem occurred|Could not|Execution failed|> [A-Z]" /tmp/build.log \
-              | tail -40 \
-              | while IFS= read -r line; do
-                  clean=$(printf '%s' "$line" | tr -d '\r' | cut -c1-380)
-                  echo "::error::$clean"
-                done
+            echo "=== build failed, emitting last 35 log lines as one annotation ==="
+            TAIL=$(tail -35 /tmp/build.log | tr -d '\r' | tr '\n' '~')
+            echo "::error::TAIL35=${TAIL}"
           fi
           exit $STATUS
         env:
