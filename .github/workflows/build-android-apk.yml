@@ -26,6 +26,9 @@ on:
       - 'package.json'
       - '.github/workflows/build-android-apk.yml'
 
+permissions:
+  contents: write   # needed so the workflow can publish/update the GitHub Release below
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -80,3 +83,11 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish/update "latest" GitHub Release with the APK attached
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: Latest build
+          body: Auto-built from the latest push/run. Download app-release.apk below.
+          files: android/app/build/outputs/apk/release/app-release.apk
