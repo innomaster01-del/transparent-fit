@@ -88,19 +88,19 @@ jobs:
 
       - name: Build release APK
         run: |
-          echo "=================== DIAGNOSTICS ==================="
-          echo "--- installed react-native version ---"
-          node -e "console.log(require('react-native/package.json').version)" || echo "RN MISSING"
-          echo "--- @react-native/gradle-plugin dir ---"
-          ls -la node_modules/@react-native/gradle-plugin/ 2>&1 | head -20 || echo "MISSING gradle-plugin"
-          echo "--- gradle-plugin package.json version ---"
-          node -e "console.log(require('@react-native/gradle-plugin/package.json').version)" 2>&1 || echo "no gradle-plugin package.json"
-          echo "--- does ReactSettingsExtension source exist? ---"
-          find node_modules/@react-native/gradle-plugin -iname "*ReactSettings*" 2>&1 || echo "not found"
-          echo "--- android/settings.gradle ---"
-          cat android/settings.gradle
-          echo "=================== END DIAGNOSTICS ==================="
-          gradle -p android assembleRelease --no-daemon --stacktrace
+          set +e
+          gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "=== build failed, emitting error lines as annotations ==="
+            grep -nE "FAILURE:|What went wrong|Caused by|> Task .*FAILED|^e: |error: |A problem occurred|Could not|Execution failed|> [A-Z]" /tmp/build.log \
+              | tail -40 \
+              | while IFS= read -r line; do
+                  clean=$(printf '%s' "$line" | tr -d '\r' | cut -c1-380)
+                  echo "::error::$clean"
+                done
+          fi
+          exit $STATUS
         env:
           CI: true
 
