@@ -1,12 +1,18 @@
 /**
  * Screen 3 — Confirm body marks (auto-detected, draggable to refine).
  * Shows the garment polygon preview that updates as marks move.
+ *
+ * Dragging uses a SINGLE PanResponder on the canvas and the touch's
+ * locationX/locationY (relative to the canvas view). This is absolute
+ * positioning — the nearest mark jumps to the finger — which is immune to
+ * the direction/mirror bug that the old per-marker cumulative-delta version
+ * hit under RTL.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, Image, Pressable, PanResponder, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Polyline, Path } from 'react-native-svg';
+import Svg, { Polyline, Line } from 'react-native-svg';
 import { colors, space, radius, fontSize } from '../theme';
 import { useT } from '../i18n';
 import { useAppStore } from '../store/appStore';
@@ -23,6 +29,11 @@ import { SubStyleStrip } from '../components/SubStyleStrip';
 import type { BodyMarks, Point } from '../logic/types';
 import type { NavProps } from '../navigation/types';
 
+const MARK_LABELS: Record<'he' | 'en', string[]> = {
+  he: ['כתף', 'כתף', 'מותן', 'מותן', 'קרסול', 'קרסול'],
+  en: ['Sh', 'Sh', 'Hip', 'Hip', 'Ank', 'Ank'],
+};
+
 export function MarkPointsScreen({ nav }: NavProps) {
   const t = useT();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -34,29 +45,33 @@ export function MarkPointsScreen({ nav }: NavProps) {
   const setSegmentationMask = useAppStore(s => s.setSegmentationMask);
   const mode = useAppStore(s => s.mode);
   const subStyles = useAppStore(s => s.subStyles);
+  const lang = useAppStore(s => s.language);
 
   const [marks, setMarksLocal] = useState<BodyMarks | null>(storedMarks);
   const [poseError, setPoseError] = useState(false);
 
   const canvasW = winW;
-  const canvasH = winH - 280; // leaves room for top bar + mode/sub strip + CTA
+  const canvasH = winH - 300;
+
+  // Keep the freshest layout + marks accessible inside the PanResponder
+  // (created once) without stale closures.
+  const marksRef = useRef<BodyMarks | null>(storedMarks);
+  marksRef.current = marks;
 
   const layout = useMemo(() => computeLayout({
     imgW: photoW, imgH: photoH,
     canvasW, canvasH,
     marks,
   }), [photoW, photoH, canvasW, canvasH, marks]);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
 
-  // Smart auto-detect on first mount:
-  //   1. Pose detection  → joint positions (inside the body)
-  //   2. Person segmentation → body silhouette mask
-  //   3. refineMarks     → snap joints to the TRUE body edges in the mask
-  // Result: the garment polygon hugs the person exactly, not the skeleton.
+  const activeIdx = useRef<number>(-1);
+
   useEffect(() => {
     if (!photoBase64 || marks) return;
     (async () => {
       try {
-        // Run pose + segmentation in parallel — both are on-device and fast.
         const [poseResult, segResult] = await Promise.allSettled([
           detectPose(photoBase64),
           segmentPerson(photoBase64, 'accurate'),
@@ -76,14 +91,12 @@ export function MarkPointsScreen({ nav }: NavProps) {
             rightAnkle: kp.rightAnkle,
           };
 
-          // Edge-snap against the segmentation mask when available.
           if (segResult.status === 'fulfilled') {
             const grid = decodeMaskToGrid(segResult.value.base64Mask);
             if (grid) {
               const toGrid = scaleMarks(refined, grid.width / imgW, grid.height / imgH);
               const snapped = refineMarks(grid, toGrid);
               refined = scaleMarks(snapped, imgW / grid.width, imgH / grid.height) as typeof refined;
-              // Keep the mask for the try-on screen (body-clipped rendering)
               setSegmentationMask(segResult.value.base64Mask);
             }
           }
@@ -116,7 +129,6 @@ export function MarkPointsScreen({ nav }: NavProps) {
   }, [photoBase64]);
 
   const placeDefaultMarks = () => {
-    // Center of photo, reasonable proportions
     const cx = photoW / 2;
     const cy = photoH / 2;
     const w = photoW * 0.20;
@@ -139,18 +151,52 @@ export function MarkPointsScreen({ nav }: NavProps) {
     return transformPolygon(imgPoly, layout);
   }, [marks, mode, subStyles, layout]);
 
-  const onMarkDrag = (idx: number, dxCanvas: number, dyCanvas: number) => {
-    if (!marks) return;
-    const dxImg = dxCanvas / layout.scale;
-    const dyImg = dyCanvas / layout.scale;
-    const newMarks = marks.slice() as BodyMarks;
-    newMarks[idx] = { x: marks[idx].x + dxImg, y: marks[idx].y + dyImg };
-    setMarksLocal(newMarks);
+  // Map a canvas-relative touch to image coords and set the given mark.
+  const setMarkFromCanvas = (idx: number, canvasX: number, canvasY: number) => {
+    const L = layoutRef.current;
+    const imgX = (canvasX - L.baseX) / L.scale;
+    const imgY = (canvasY - L.baseY) / L.scale;
+    const prev = marksRef.current;
+    if (!prev) return;
+    const next = prev.slice() as BodyMarks;
+    next[idx] = { x: imgX, y: imgY };
+    setMarksLocal(next);
   };
 
-  const commit = () => {
-    if (marks) setMarks(marks);
+  const findNearestMark = (canvasX: number, canvasY: number): number => {
+    const prev = marksRef.current;
+    const L = layoutRef.current;
+    if (!prev) return -1;
+    let best = -1, bestD = Infinity;
+    prev.forEach((m, i) => {
+      const cx = L.baseX + m.x * L.scale;
+      const cy = L.baseY + m.y * L.scale;
+      const d = Math.hypot(cx - canvasX, cy - canvasY);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    // Only grab a mark if the touch is reasonably close (60px).
+    return bestD <= 60 ? best : -1;
   };
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (evt) => {
+      const { locationX, locationY } = evt.nativeEvent;
+      activeIdx.current = findNearestMark(locationX, locationY);
+      if (activeIdx.current >= 0) setMarkFromCanvas(activeIdx.current, locationX, locationY);
+    },
+    onPanResponderMove: (evt) => {
+      if (activeIdx.current < 0) return;
+      const { locationX, locationY } = evt.nativeEvent;
+      setMarkFromCanvas(activeIdx.current, locationX, locationY);
+    },
+    onPanResponderRelease: () => {
+      if (marksRef.current) setMarks(marksRef.current);
+      activeIdx.current = -1;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
 
   if (!photoBase64) {
     return (
@@ -159,6 +205,8 @@ export function MarkPointsScreen({ nav }: NavProps) {
       </SafeAreaView>
     );
   }
+
+  const toCanvas = (p: Point) => ({ x: layout.baseX + p.x * layout.scale, y: layout.baseY + p.y * layout.scale });
 
   return (
     <SafeAreaView style={styles.root}>
@@ -175,7 +223,7 @@ export function MarkPointsScreen({ nav }: NavProps) {
       {poseError && <Text style={styles.poseHint}>{t('pose_not_detected')}</Text>}
       {!poseError && marks && <Text style={styles.poseHint}>{t('pose_detected')}</Text>}
 
-      <View style={[styles.canvasBox, { width: canvasW, height: canvasH }]}>
+      <View style={[styles.canvasBox, { width: canvasW, height: canvasH }]} {...panResponder.panHandlers}>
         <Image
           source={{ uri: `data:image/jpeg;base64,${photoBase64}` }}
           style={{
@@ -185,17 +233,32 @@ export function MarkPointsScreen({ nav }: NavProps) {
           }}
           resizeMode="cover"
         />
+
+        {/* skeleton frame */}
+        {marks && (() => {
+          const [ls, rs, lh, rh, la, ra] = marks.map(toCanvas);
+          const L = (a: Point, b: Point, k: string) => (
+            <Line key={k} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+              stroke="rgba(124,58,237,0.55)" strokeWidth={2.5} strokeLinecap="round" strokeDasharray="4,5" />
+          );
+          return (
+            <Svg width={canvasW} height={canvasH} style={StyleSheet.absoluteFill} pointerEvents="none">
+              {L(ls, rs, 'sh')}{L(lh, rh, 'hip')}{L(ls, lh, 'll')}{L(rs, rh, 'rr')}{L(lh, la, 'lg')}{L(rh, ra, 'rg')}
+            </Svg>
+          );
+        })()}
+
         <GarmentOutline polygon={polygon} width={canvasW} height={canvasH} showFill={false} showGlow={false} />
-        {marks && marks.map((m, i) => (
-          <DraggableMarker
-            key={i}
-            x={layout.baseX + m.x * layout.scale}
-            y={layout.baseY + m.y * layout.scale}
-            label={String(i + 1)}
-            onMove={(dx, dy) => onMarkDrag(i, dx, dy)}
-            onRelease={commit}
-          />
-        ))}
+
+        {/* marker visuals (non-interactive — the canvas PanResponder handles drags) */}
+        {marks && marks.map((m, i) => {
+          const c = toCanvas(m);
+          return (
+            <View key={i} pointerEvents="none" style={[styles.marker, { left: c.x - 22, top: c.y - 22 }]}>
+              <Text style={styles.markerLabel}>{MARK_LABELS[lang][i]}</Text>
+            </View>
+          );
+        })}
       </View>
 
       <ModeStripHorizontal />
@@ -213,32 +276,6 @@ export function MarkPointsScreen({ nav }: NavProps) {
   );
 }
 
-function DraggableMarker(props: {
-  x: number; y: number; label: string;
-  onMove: (dx: number, dy: number) => void;
-  onRelease: () => void;
-}) {
-  const startRef = React.useRef({ x: 0, y: 0 });
-  const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: () => { startRef.current = { x: props.x, y: props.y }; },
-    onPanResponderMove: (_, g) => { props.onMove(g.dx, g.dy); },
-    onPanResponderRelease: () => { props.onRelease(); },
-  }), [props]);
-
-  return (
-    <View
-      {...responder.panHandlers}
-      style={[
-        styles.marker,
-        { left: props.x - 18, top: props.y - 18 },
-      ]}>
-      <Text style={styles.markerLabel}>{props.label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bgPrimary },
   topBar: {
@@ -249,12 +286,12 @@ const styles = StyleSheet.create({
   poseHint: { color: colors.textSecondary, fontSize: fontSize.small, textAlign: 'center', padding: space.sm },
   canvasBox: { position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
   marker: {
-    position: 'absolute', width: 36, height: 36, borderRadius: 18,
-    backgroundColor: colors.purple,
+    position: 'absolute', width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(124,58,237,0.9)',
     borderWidth: 3, borderColor: colors.outlineWhite,
     alignItems: 'center', justifyContent: 'center',
   },
-  markerLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  markerLabel: { color: colors.textPrimary, fontSize: 9, fontWeight: '700' },
   confirmBtn: {
     margin: space.md, height: 54, borderRadius: radius.md,
     backgroundColor: colors.purple, alignItems: 'center', justifyContent: 'center',

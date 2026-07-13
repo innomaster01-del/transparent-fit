@@ -25,7 +25,7 @@ import { colors, space, fontSize } from '../theme';
 import { useT } from '../i18n';
 import { useAppStore } from '../store/appStore';
 import { IconButton } from '../components/IconButton';
-import { ModeSelector } from '../components/ModeSelector';
+import { SubStyleStrip } from '../components/SubStyleStrip';
 import { CaptureButton } from '../components/CaptureButton';
 import { GarmentOutline } from '../components/GarmentOutline';
 import { buildPolygon } from '../logic/buildPolygon';
@@ -211,9 +211,10 @@ export function LiveTryOnScreen({ nav }: NavProps) {
         />
       </View>
 
-      {/* Right side: mode column */}
-      <View style={styles.rightStack}>
-        <ModeSelector />
+      {/* Sub-style tweaks only — the garment TYPE was already chosen on the
+          previous screen, so we don't re-ask for it here. */}
+      <View style={styles.subStripWrap}>
+        <SubStyleStrip />
       </View>
 
       {/* Bottom left: tool buttons (light · flip · pause) */}
@@ -271,10 +272,11 @@ const styles = StyleSheet.create({
   titleLabel: { color: colors.purple, fontSize: fontSize.small, fontWeight: '700', letterSpacing: 1.2 },
   titleHint: { color: colors.textPrimary, fontSize: fontSize.body, fontWeight: '600', marginTop: 2 },
   canvas: { position: 'absolute', top: 56, left: 0, right: 0, overflow: 'hidden', backgroundColor: '#000' },
-  rightStack: {
+  subStripWrap: {
     position: 'absolute',
-    top: 85,
-    right: 10,
+    bottom: 110,
+    left: 0,
+    right: 0,
     zIndex: 10,
   },
   toolStack: {
