@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Transparent Fit — בדיקה</title>
+<style>
+  :root{
+    --bg:#08060f; --bg2:#13101d; --purple:#7C3AED; --pink:#DB2777;
+    --border:rgba(255,255,255,.12); --txt:#fff; --txt2:rgba(255,255,255,.65);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#000;color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+    -webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  #app{position:fixed;inset:0;max-width:520px;margin:0 auto;background:var(--bg);overflow:hidden}
+  .screen{position:absolute;inset:0;display:none;flex-direction:column}
+  .screen.active{display:flex}
+  button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px}
+  .iconbtn{width:42px;height:42px;border-radius:21px;background:rgba(0,0,0,.6);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;font-size:18px}
+  .title{font-size:14px;font-weight:600}
+  .hint{color:var(--txt2);font-size:12px;text-align:center;padding:8px}
+  .primary{height:54px;border-radius:12px;font-size:18px;font-weight:700;color:#fff;
+    background:linear-gradient(90deg,var(--purple),var(--pink));box-shadow:0 4px 18px rgba(124,58,237,.35)}
+  .secondary{height:50px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);color:var(--txt2);font-size:14px}
+  .canvasBox{position:relative;overflow:hidden;background:#000;align-self:center;touch-action:none}
+  .marker{position:absolute;width:44px;height:44px;border-radius:22px;background:rgba(124,58,237,.9);
+    border:3px solid rgba(255,255,255,.95);display:flex;align-items:center;justify-content:center;
+    font-size:9px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
+  .strip{display:flex;gap:8px;padding:8px 14px;overflow-x:auto}
+  .chip{flex-shrink:0;padding:8px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--border);
+    color:var(--txt2);font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .chip.sel{background:var(--purple);border-color:transparent;color:#fff}
+  .subchip{flex-shrink:0;padding:6px 14px;border-radius:999px;background:rgba(255,255,255,.08);
+    border:1px solid var(--border);color:var(--txt2);font-size:12px;font-weight:500}
+  .subchip.sel{background:rgba(124,58,237,.25);border-color:var(--purple);color:#fff}
+  .capture{width:74px;height:74px;border-radius:37px;border:4px solid rgba(255,255,255,.85);background:transparent;
+    display:flex;align-items:center;justify-content:center}
+  .capture span{width:60px;height:60px;border-radius:30px;background:linear-gradient(135deg,#fff,#fff,rgba(180,140,255,.4))}
+  .pill{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.6);
+    border:1px solid var(--border);border-radius:999px;padding:6px 14px;font-size:12px;white-space:nowrap}
+  .brand{font-size:28px;font-weight:800;letter-spacing:-.5px}
+  .brand b{color:var(--purple)}
+  .feat{display:flex;align-items:center;gap:14px;background:var(--bg2);border:1px solid var(--border);
+    border-radius:12px;padding:14px;margin-bottom:14px}
+  .feat .ic{width:40px;height:40px;border-radius:8px;background:rgba(124,58,237,.35);display:flex;
+    align-items:center;justify-content:center;font-size:20px}
+  video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 1. WELCOME -->
+  <div class="screen active" id="s-welcome" style="padding:22px;justify-content:space-between">
+    <div style="margin-top:30px">
+      <div class="brand">Transparent <b>Fit</b></div>
+      <div style="color:var(--txt2);margin-top:8px">ראה כל בגד עליך עם המצלמה בלבד</div>
+    </div>
+    <div style="margin-top:24px">
+      <div class="feat"><div class="ic">📷</div><div>סרוק בגדים אמיתיים מהמציאות</div></div>
+      <div class="feat"><div class="ic">🧍</div><div>הגוף שלך נשאר אותו דבר</div></div>
+      <div class="feat"><div class="ic">👕</div><div>בגדים אמיתיים נופלים עליך</div></div>
+    </div>
+    <div style="flex:1"></div>
+    <button class="primary" onclick="go('photo')">תתחיל ←</button>
+    <button class="secondary" style="margin-top:12px" onclick="pickPhoto()">העלה תמונה במקום →</button>
+  </div>
+
+  <!-- 2. PHOTO -->
+  <div class="screen" id="s-photo">
+    <div class="topbar">
+      <button class="iconbtn" onclick="go('welcome')">‹</button>
+      <div class="title">שלב 1 · צלם תמונת גוף מלא</div>
+      <div style="width:42px"></div>
+    </div>
+    <div style="flex:1;position:relative;background:#000" id="photoStage">
+      <video id="camPhoto" playsinline muted></video>
+      <img id="photoPreview" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none">
+      <div class="pill" id="photoHint">עמוד במרחק 2 מ׳, גוף מלא בפריים</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-around;padding:18px">
+      <button class="secondary" style="padding:0 14px;height:40px" onclick="pickPhoto()">📁 גלריה</button>
+      <button class="capture" id="shootBtn" onclick="shootPhoto()"><span></span></button>
+      <div style="width:70px"></div>
+    </div>
+    <div id="photoConfirm" style="display:none;gap:12px;padding:14px">
+      <button class="secondary" style="flex:1" onclick="retakePhoto()">צלם שוב</button>
+      <button class="primary" style="flex:1" onclick="go('mark')">המשך ←</button>
+    </div>
+  </div>
+
+  <!-- 3. MARK POINTS -->
+  <div class="screen" id="s-mark">
+    <div class="topbar">
+      <button class="iconbtn" onclick="go('photo')">‹</button>
+      <div class="title">שלב 2 · אשר את נקודות הגוף</div>
+      <div style="width:42px"></div>
+    </div>
+    <div class="hint" id="markHint">גרור כל נקודה למקום הנכון על הגוף</div>
+    <div class="canvasBox" id="markBox">
+      <img id="markImg" style="position:absolute">
+      <svg id="markSkel" style="position:absolute;inset:0;pointer-events:none"></svg>
+      <canvas id="markOutline" style="position:absolute;inset:0;pointer-events:none"></canvas>
+      <div id="markers"></div>
+    </div>
+    <div class="strip" id="modeStrip"></div>
+    <div class="strip" id="subStripMark"></div>
+    <button class="primary" style="margin:14px" onclick="go('live')">התחל מדידה ←</button>
+  </div>
+
+  <!-- 4. LIVE TRY-ON -->
+  <div class="screen" id="s-live">
+    <div class="topbar">
+      <button class="iconbtn" onclick="go('mark')">‹</button>
+      <div class="title" id="liveTitle" style="text-align:center;flex:1">
+        <div style="color:var(--purple);font-size:12px;font-weight:700;letter-spacing:1px" id="liveMode">מצב חולצה</div>
+        <div style="font-size:14px" id="liveHint">כוון לחולצה</div>
+      </div>
+      <button class="iconbtn" onclick="go('welcome')">✕</button>
+    </div>
+    <div class="canvasBox" id="liveBox">
+      <video id="camLive" playsinline muted></video>
+      <canvas id="liveCanvas" style="display:block"></canvas>
+      <div class="pill" id="livePill">כוון את המצלמה על בגד</div>
+    </div>
+    <div style="position:absolute;bottom:0;left:0;right:0;padding-bottom:14px;
+      background:linear-gradient(to top,rgba(8,6,15,.95),rgba(8,6,15,0))">
+      <div class="strip" id="subStripLive" style="justify-content:center"></div>
+      <div style="display:flex;align-items:center;justify-content:space-around;padding-top:8px">
+        <button class="iconbtn" onclick="flipCam()">🔄</button>
+        <button class="capture" onclick="captureLive()"><span></span></button>
+        <div style="width:42px"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<input type="file" id="fileInput" accept="image/*" style="display:none">
+
+<script type="module">
+/* ---------- on-device body auto-detection (MediaPipe Pose) ----------
+   Loads once from CDN (needs internet on first use, then cached). Runs on
+   the static calibration photo to auto-place the 6 body points. */
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17";
+let _landmarker=null;
+async function ensureLandmarker(){
+  if(_landmarker) return _landmarker;
+  const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
+  _landmarker = await PoseLandmarker.createFromOptions(fileset,{
+    baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task" },
+    runningMode:"IMAGE", numPoses:1
+  });
+  return _landmarker;
+}
+// returns 6 marks [Lsh,Rsh,Lhip,Rhip,Lank,Rank] in image px, or null
+window.detectPoseMarks = async function(imgEl){
+  const lm = await ensureLandmarker();
+  const res = lm.detect(imgEl);
+  const p = res.landmarks && res.landmarks[0];
+  if(!p) return null;
+  const W = imgEl.naturalWidth||imgEl.width, H = imgEl.naturalHeight||imgEl.height;
+  const g = (i)=>({x:p[i].x*W, y:p[i].y*H});
+  // MediaPipe: 11 L-shoulder, 12 R-shoulder, 23 L-hip, 24 R-hip, 27 L-ankle, 28 R-ankle
+  return [g(11),g(12),g(23),g(24),g(27),g(28)];
+};
+window.__poseWarm = ensureLandmarker().catch(()=>{});  // warm up early
+</script>
+
+<script>
+/* ---------- garment geometry (ported 1:1 from the app logic) ---------- */
+function bodyAxes(m){
+  const lSh=m[0],rSh=m[1],lHip=m[2],rHip=m[3],lAnkle=m[4],rAnkle=m[5];
+  const shMid={x:(lSh.x+rSh.x)/2,y:(lSh.y+rSh.y)/2};
+  const hipMid={x:(lHip.x+rHip.x)/2,y:(lHip.y+rHip.y)/2};
+  const shW=Math.hypot(rSh.x-lSh.x,rSh.y-lSh.y);
+  const torsoH=Math.hypot(hipMid.x-shMid.x,hipMid.y-shMid.y);
+  const dx=(hipMid.x-shMid.x)/Math.max(1e-6,torsoH), dy=(hipMid.y-shMid.y)/Math.max(1e-6,torsoH);
+  const rx=-dy, ry=dx;
+  const point=(o,along,across)=>({x:o.x+dx*along+rx*across,y:o.y+dy*along+ry*across});
+  return {lSh,rSh,lHip,rHip,shMid,hipMid,torsoH,shW,point,lAnkle,rAnkle};
+}
+function buildShirt(ax,sub){
+  // Clean, non-self-intersecting t-shirt outline. The body side runs directly
+  // from the sleeve's inner-bottom to the hem (no armpit point above the sleeve
+  // that would loop back and cross the sleeve edge — the old bug that made an "X").
+  const {lSh,rSh,hipMid,shMid,shW,torsoH,point}=ax;
+  let sl,so,vd,neck;
+  if(sub==='long_sleeve'){sl=0.95;so=0.18;neck='crew';vd=0.16;}
+  else if(sub==='tank'){sl=0;so=0;neck='crew';vd=0.16;}
+  else if(sub==='vneck'){sl=0.34;so=0.42;neck='v';vd=0.30;}
+  else{sl=0.34;so=0.42;neck='crew';vd=0.16;}
+  const collarL=point(lSh,-torsoH*0.04,+shW*0.16),collarR=point(rSh,-torsoH*0.04,-shW*0.16);
+  const vBottom=point(shMid,torsoH*vd,0);
+  const shExtL=point(lSh,0,-shW*0.14),shExtR=point(rSh,0,+shW*0.14);
+  const hw=0.50;
+  const hemL=point(hipMid,torsoH*0.08,-shW*hw),hemMidL=point(hipMid,torsoH*0.08,-shW*hw*0.4);
+  const hemMidR=point(hipMid,torsoH*0.08,+shW*hw*0.4),hemR=point(hipMid,torsoH*0.08,+shW*hw);
+  if(sub==='tank'){
+    const armL=point(lSh,torsoH*0.22,+shW*0.12),armR=point(rSh,torsoH*0.22,-shW*0.12);
+    const path=neck==='v'?[collarL,vBottom,collarR]:[collarL,collarR];
+    return[...path,armR,hemR,hemMidR,hemMidL,hemL,armL];
+  }
+  const ci=so*0.45; // cuff-inner width — always inward of the cuff-outer
+  const cuffOutL=point(lSh,torsoH*sl,-shW*so),cuffOutR=point(rSh,torsoH*sl,+shW*so);
+  const cuffInL=point(lSh,torsoH*sl*0.94,-shW*ci),cuffInR=point(rSh,torsoH*sl*0.94,+shW*ci);
+  const neckPath=neck==='v'?[collarL,vBottom,collarR]:[collarL,collarR];
+  return[...neckPath,shExtR,cuffOutR,cuffInR,hemR,hemMidR,hemMidL,hemL,cuffInL,cuffOutL,shExtL];
+}
+function buildPants(ax,sub){
+  const {lHip,rHip,hipMid,shW,torsoH,point}=ax;
+  let len,kt,at;
+  if(sub==='shorts'){len=0.35;kt=0.55;at=0.55;}
+  else if(sub==='skirt'){len=0.55;kt=0.85;at=1.0;}
+  else{len=1.0;kt=0.62;at=0.48;}
+  const wh=0.55;
+  const waistL=point(hipMid,-torsoH*0.04,-shW*wh),waistR=point(hipMid,-torsoH*0.04,+shW*wh);
+  const hipFlareL=point(hipMid,0,-shW*0.62),hipFlareR=point(hipMid,0,+shW*0.62);
+  if(sub==='skirt'){
+    const hemL=point(hipMid,torsoH*len,-shW*0.85),hemR=point(hipMid,torsoH*len,+shW*0.85);
+    return[waistL,hipFlareL,hemL,hemR,hipFlareR,waistR];
+  }
+  const lKO=point(lHip,torsoH*len*0.5,-shW*0.32*kt),rKO=point(rHip,torsoH*len*0.5,+shW*0.32*kt);
+  const lAO=point(lHip,torsoH*len*0.95,-shW*0.28*at),rAO=point(rHip,torsoH*len*0.95,+shW*0.28*at);
+  const crotch=point(hipMid,torsoH*0.12,0);
+  const lKI=point(hipMid,torsoH*len*0.5,-shW*0.10),rKI=point(hipMid,torsoH*len*0.5,+shW*0.10);
+  const lAI=point(hipMid,torsoH*len*0.95,-shW*0.08),rAI=point(hipMid,torsoH*len*0.95,+shW*0.08);
+  const lAB=point(lHip,torsoH*len,-shW*0.24*at),rAB=point(rHip,torsoH*len,+shW*0.24*at);
+  const lABI=point(hipMid,torsoH*len,-shW*0.06),rABI=point(hipMid,torsoH*len,+shW*0.06);
+  return[waistL,hipFlareL,lKO,lAO,lAB,lABI,lAI,lKI,crotch,rKI,rAI,rABI,rAB,rAO,rKO,hipFlareR,waistR];
+}
+function buildDress(ax,sub){
+  const {lSh,rSh,hipMid,shW,torsoH,point}=ax;
+  let hd,hwid;
+  if(sub==='mini'){hd=0.40;hwid=0.70;}
+  else if(sub==='long'){hd=1.80;hwid=1.10;}
+  else{hd=1.00;hwid=0.90;}
+  const collarL=point(lSh,-torsoH*0.02,+shW*0.16),collarR=point(rSh,-torsoH*0.02,-shW*0.16);
+  const seL=point(lSh,torsoH*0.02,-shW*0.08),seR=point(rSh,torsoH*0.02,+shW*0.08);
+  const underL=point(lSh,torsoH*0.22,+shW*0.04),underR=point(rSh,torsoH*0.22,-shW*0.04);
+  const waistL=point(hipMid,-torsoH*0.05,-shW*0.42),waistR=point(hipMid,-torsoH*0.05,+shW*0.42);
+  const hipL=point(hipMid,0,-shW*0.50),hipR=point(hipMid,0,+shW*0.50);
+  const hemL=point(hipMid,torsoH*hd,-shW*hwid),hemMidL=point(hipMid,torsoH*hd,-shW*hwid*0.5);
+  const hemMidR=point(hipMid,torsoH*hd,+shW*hwid*0.5),hemR=point(hipMid,torsoH*hd,+shW*hwid);
+  return[collarL,collarR,seR,underR,waistR,hipR,hemR,hemMidR,hemMidL,hemL,hipL,waistL,underL,seL];
+}
+function buildJumpsuit(ax,sub){
+  // Clean unified jumpsuit: sleeves connect to the hip flare without an armpit
+  // loop-back, legs use the standard (clean) pants topology.
+  const {lSh,rSh,lHip,rHip,hipMid,shW,torsoH,point}=ax;
+  let capOut,sl,so;
+  if(sub==='summer'){capOut=0.12;sl=0;so=0;}
+  else if(sub==='formal'){capOut=0.14;sl=0.85;so=0.16;}
+  else{capOut=0.16;sl=0.30;so=0.30;}
+  const collarL=point(lSh,-torsoH*0.02,+shW*0.16),collarR=point(rSh,-torsoH*0.02,-shW*0.16);
+  function sleeve(sh,sign){const cap=point(sh,torsoH*0.02,sign*shW*capOut);if(sl<=0.001)return[cap];const ci=so*0.45;return[cap,point(sh,torsoH*sl,sign*shW*so),point(sh,torsoH*sl*0.94,sign*shW*ci)];}
+  const hFL=point(hipMid,0,-shW*0.55),hFR=point(hipMid,0,+shW*0.55);
+  const lKO=point(lHip,torsoH*0.55,-shW*0.20),rKO=point(rHip,torsoH*0.55,+shW*0.20);
+  const lAO=point(lHip,torsoH*1.0,-shW*0.16),rAO=point(rHip,torsoH*1.0,+shW*0.16);
+  const crotch=point(hipMid,torsoH*0.20,0);
+  const lKI=point(hipMid,torsoH*0.55,-shW*0.07),rKI=point(hipMid,torsoH*0.55,+shW*0.07);
+  const lAI=point(hipMid,torsoH*1.0,-shW*0.05),rAI=point(hipMid,torsoH*1.0,+shW*0.05);
+  const sr=sleeve(rSh,+1), slft=sleeve(lSh,-1).reverse();
+  return[collarL,collarR,...sr,hFR,rKO,rAO,rAI,rKI,crotch,lKI,lAI,lAO,lKO,hFL,...slft];
+}
+/* Ensure consistent handedness: the garment builders assume the person's
+   LEFT shoulder (mark 0) sits on the SCREEN-RIGHT (larger x), as pose
+   detectors return for a front-facing person. If the marks are reversed,
+   swap the left/right pairs so the polygon never self-intersects. */
+function normalizeMarks(m){
+  if(m[0].x < m[1].x) return [m[1],m[0],m[3],m[2],m[5],m[4]];
+  return m;
+}
+function buildPolygon(m,mode,sub){
+  const ax=bodyAxes(normalizeMarks(m));
+  if(mode==='shirt')return buildShirt(ax,sub);
+  if(mode==='pants')return buildPants(ax,sub);
+  if(mode==='dress')return buildDress(ax,sub);
+  return buildJumpsuit(ax,sub);
+}
+function smoothPath(ctx,pts){
+  if(pts.length<3)return;
+  const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  const s=mid(pts[pts.length-1],pts[0]);
+  ctx.moveTo(s.x,s.y);
+  for(let i=0;i<pts.length;i++){const c=pts[i],n=pts[(i+1)%pts.length],e=mid(c,n);ctx.quadraticCurveTo(c.x,c.y,e.x,e.y);}
+  ctx.closePath();
+}
+function computeLayout(imgW,imgH,cw,ch,marks){
+  const anchorY=0.28, over=1.20;
+  const scale=Math.min(cw/imgW,ch/imgH)*over;
+  if(!marks)return{scale,baseX:(cw-imgW*scale)/2,baseY:(ch-imgH*scale)/2};
+  const lSh=marks[0],rSh=marks[1];
+  const shX=(lSh.x+rSh.x)/2, shY=(lSh.y+rSh.y)/2;
+  return{scale,baseX:cw/2-shX*scale,baseY:ch*anchorY-shY*scale};
+}
+
+/* ---------- app state ---------- */
+var state={
+  photo:null, photoW:0, photoH:0,
+  marks:null, mode:'shirt',
+  subs:{shirt:'tshirt',pants:'long',dress:'knee',full:'casual'},
+  camStream:null, facing:'environment'
+};
+var MODES=[['shirt','👕','חולצה'],['pants','👖','מכנס'],['dress','👗','שמלה'],['full','🧥','חליפה']];
+var SUBS={
+  shirt:[['tshirt','טי-שירט'],['long_sleeve','שרוול ארוך'],['tank','גופייה'],['vneck','V']],
+  pants:[['long','ארוך'],['shorts','קצר'],['skirt','חצאית']],
+  dress:[['knee','ברך'],['long','ארוך'],['mini','מיני']],
+  full:[['casual','קז׳ואל'],['summer','קיצי'],['formal','רשמי']]
+};
+var HINTS={shirt:'כוון לחולצה',pants:'כוון למכנס',dress:'כוון לשמלה',full:'כוון לחליפה'};
+var MODEN={shirt:'מצב חולצה',pants:'מצב מכנס',dress:'מצב שמלה',full:'מצב חליפה'};
+
+function go(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s-'+name).classList.add('active');
+  if(name==='photo')startPhotoCam();
+  else stopCam(document.getElementById('camPhoto'));
+  if(name==='mark')initMark();
+  if(name==='live')startLive();
+  else stopCam(document.getElementById('camLive'));
+}
+
+/* ---------- camera helpers ---------- */
+async function getCam(video,facing){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:1280}},audio:false});
+    video.srcObject=s; await video.play(); return s;
+  }catch(e){ return null; }
+}
+function stopCam(v){ if(v&&v.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null;} }
+
+/* ---------- photo screen ---------- */
+var photoCamStream=null;
+async function startPhotoCam(){
+  document.getElementById('photoPreview').style.display='none';
+  document.getElementById('photoConfirm').style.display='none';
+  document.getElementById('shootBtn').parentElement.style.display='flex';
+  const v=document.getElementById('camPhoto');
+  v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:1';
+  photoCamStream=await getCam(v,'environment');
+  if(!photoCamStream){ document.getElementById('photoHint').textContent='אין גישה למצלמה — השתמש ב"גלריה"'; }
+}
+function shootPhoto(){
+  const v=document.getElementById('camPhoto');
+  if(!v.videoWidth){return;}
+  const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  usePhoto(c.toDataURL('image/jpeg',0.9),c.width,c.height);
+}
+function pickPhoto(){ document.getElementById('fileInput').click(); }
+document.getElementById('fileInput').onchange=function(e){
+  const f=e.target.files[0]; e.target.value='';
+  if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ const im=new Image(); im.onload=()=>{ usePhoto(r.result,im.naturalWidth,im.naturalHeight); go('photo'); showPreview(); }; im.src=r.result; };
+  r.readAsDataURL(f);
+};
+function usePhoto(url,w,h){ state.photo=url;state.photoW=w;state.photoH=h;state.marks=null; if(document.getElementById('s-photo').classList.contains('active'))showPreview(); }
+function showPreview(){
+  stopCam(document.getElementById('camPhoto'));
+  const img=document.getElementById('photoPreview');
+  img.src=state.photo; img.style.display='block';
+  document.getElementById('shootBtn').parentElement.style.display='none';
+  document.getElementById('photoConfirm').style.display='flex';
+}
+function retakePhoto(){ startPhotoCam(); }
+
+/* ---------- mark screen ---------- */
+var markLayout=null;
+function loadImg(src){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src;});}
+function setMarkHint(txt){const el=document.getElementById('markHint');if(el)el.textContent=txt;}
+function defaultMarks(){
+  const cx=state.photoW/2, cy=state.photoH/2, w=state.photoW*0.20, h=state.photoH*0.35;
+  return[{x:cx-w/2,y:cy-h/2},{x:cx+w/2,y:cy-h/2},{x:cx-w/2.5,y:cy},{x:cx+w/2.5,y:cy},{x:cx-w/3,y:cy+h*1.2},{x:cx+w/3,y:cy+h*1.2}];
+}
+async function initMark(){
+  if(!state.photo)return;
+  if(!state.marks){
+    setMarkHint('🔍 מזהה את הגוף אוטומטית…');
+    try{
+      const img=await loadImg(state.photo);
+      const detected=await window.detectPoseMarks(img);
+      state.marks = detected ? normalizeMarks(detected) : defaultMarks();
+      setMarkHint(detected ? '✓ זוהה — גרור נקודה רק אם צריך לתקן' : 'לא זוהה גוף — גרור את הנקודות ידנית');
+    }catch(e){
+      state.marks=defaultMarks();
+      setMarkHint('גרור כל נקודה למקום הנכון על הגוף');
+    }
+  } else {
+    setMarkHint('גרור נקודה רק אם צריך לתקן');
+  }
+  const box=document.getElementById('markBox');
+  const cw=Math.min(window.innerWidth,520), ch=window.innerHeight-300;
+  box.style.width=cw+'px'; box.style.height=ch+'px';
+  markLayout=computeLayout(state.photoW,state.photoH,cw,ch,state.marks);
+  const img=document.getElementById('markImg');
+  img.src=state.photo;
+  img.style.left=markLayout.baseX+'px';img.style.top=markLayout.baseY+'px';
+  img.style.width=state.photoW*markLayout.scale+'px';img.style.height=state.photoH*markLayout.scale+'px';
+  document.getElementById('markOutline').width=cw; document.getElementById('markOutline').height=ch;
+  document.getElementById('markSkel').setAttribute('width',cw);
+  document.getElementById('markSkel').setAttribute('height',ch);
+  buildModeStrip(); buildSubStrip('subStripMark');
+  renderMark();
+}
+var LABELS=['כתף','כתף','מותן','מותן','קרסול','קרסול'];
+function toCanvas(p){return{x:markLayout.baseX+p.x*markLayout.scale,y:markLayout.baseY+p.y*markLayout.scale};}
+function renderMark(){
+  const m=state.marks.map(toCanvas);
+  // skeleton
+  const skel=document.getElementById('markSkel');
+  const seg=[[0,1],[2,3],[0,2],[1,3],[2,4],[3,5]];
+  skel.innerHTML=seg.map(([a,b])=>`<line x1="${m[a].x}" y1="${m[a].y}" x2="${m[b].x}" y2="${m[b].y}" stroke="rgba(124,58,237,.55)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="4 5"/>`).join('');
+  // outline
+  const cv=document.getElementById('markOutline'), ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const poly=buildPolygon(state.marks,state.mode,state.subs[state.mode]).map(toCanvas);
+  const p=new Path2D(); smoothPath(p,poly);
+  ctx.strokeStyle='rgba(255,255,255,.95)';ctx.lineWidth=2.6;ctx.lineJoin='round';ctx.stroke(p);
+  // markers
+  document.getElementById('markers').innerHTML=m.map((c,i)=>`<div class="marker" style="left:${c.x-22}px;top:${c.y-22}px">${LABELS[i]}</div>`).join('');
+}
+function buildModeStrip(){
+  document.getElementById('modeStrip').innerHTML=MODES.map(([id,ic,nm])=>
+    `<button class="chip ${state.mode===id?'sel':''}" onclick="setMode('${id}')">${ic} ${nm}</button>`).join('');
+}
+function buildSubStrip(elId){
+  const el=document.getElementById(elId);
+  el.innerHTML=SUBS[state.mode].map(([id,nm])=>
+    `<button class="subchip ${state.subs[state.mode]===id?'sel':''}" onclick="setSub('${id}')">${nm}</button>`).join('');
+}
+function setMode(id){state.mode=id;buildModeStrip();buildSubStrip('subStripMark');renderMark();}
+function setSub(id){state.subs[state.mode]=id;buildSubStrip('subStripMark');if(document.getElementById('s-mark').classList.contains('active'))renderMark();buildSubStrip('subStripLive');}
+
+/* absolute-position dragging (immune to direction/mirror bugs) */
+(function(){
+  const box=document.getElementById('markBox');
+  let active=-1;
+  function nearest(cx,cy){
+    let best=-1,bd=1e9;
+    state.marks.map(toCanvas).forEach((c,i)=>{const d=Math.hypot(c.x-cx,c.y-cy);if(d<bd){bd=d;best=i;}});
+    return bd<=60?best:-1;
+  }
+  function setFrom(cx,cy){
+    if(active<0)return;
+    state.marks[active]={x:(cx-markLayout.baseX)/markLayout.scale,y:(cy-markLayout.baseY)/markLayout.scale};
+    renderMark();
+  }
+  function rel(e){const r=box.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return{x:t.clientX-r.left,y:t.clientY-r.top};}
+  box.addEventListener('pointerdown',e=>{const p=rel(e);active=nearest(p.x,p.y);if(active>=0){box.setPointerCapture(e.pointerId);setFrom(p.x,p.y);}});
+  box.addEventListener('pointermove',e=>{if(active<0)return;const p=rel(e);setFrom(p.x,p.y);});
+  box.addEventListener('pointerup',()=>{active=-1;});
+})();
+
+/* ---------- live try-on: garment-shaped camera window ---------- */
+var liveRAF=0, liveLayout=null, livePhotoImg=null;
+async function startLive(){
+  document.getElementById('liveMode').textContent=MODEN[state.mode];
+  document.getElementById('liveHint').textContent=HINTS[state.mode];
+  buildSubStrip('subStripLive');
+  const box=document.getElementById('liveBox');
+  const cw=Math.min(window.innerWidth,520), ch=window.innerHeight-56;
+  box.style.width=cw+'px'; box.style.height=ch+'px';
+  const cv=document.getElementById('liveCanvas');
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=cw*dpr; cv.height=ch*dpr; cv.style.width=cw+'px'; cv.style.height=ch+'px';
+  liveLayout=computeLayout(state.photoW,state.photoH,cw,ch,state.marks);
+  livePhotoImg=new Image(); livePhotoImg.src=state.photo;
+  const v=document.getElementById('camLive');
+  state.camStream=await getCam(v,state.facing);
+  document.getElementById('livePill').textContent = state.camStream ? 'כוון את המצלמה על בגד' : 'אין מצלמה — מציג צללית';
+  cancelAnimationFrame(liveRAF);
+  const ctx=cv.getContext('2d');
+  const mirror = state.facing==='user';
+  function drawCover(vw,vh){
+    if(!vw||!vh)return;
+    const sc=Math.max(cw/vw,ch/vh), sw=cw/sc, sh=ch/sc, sx=(vw-sw)/2, sy=(vh-sh)/2;
+    ctx.save(); if(mirror){ctx.translate(cw,0);ctx.scale(-1,1);} ctx.drawImage(v,sx,sy,sw,sh,0,0,cw,ch); ctx.restore();
+  }
+  function frame(){
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,cw,ch);
+    if(livePhotoImg&&livePhotoImg.complete) ctx.drawImage(livePhotoImg,liveLayout.baseX,liveLayout.baseY,state.photoW*liveLayout.scale,state.photoH*liveLayout.scale);
+    else {ctx.fillStyle='#000';ctx.fillRect(0,0,cw,ch);}
+    const poly=buildPolygon(state.marks,state.mode,state.subs[state.mode]).map(p=>({x:liveLayout.baseX+p.x*liveLayout.scale,y:liveLayout.baseY+p.y*liveLayout.scale}));
+    const path=new Path2D(); smoothPath(path,poly);
+    ctx.save(); ctx.clip(path);
+    if(v.readyState>=2){ drawCover(v.videoWidth,v.videoHeight); ctx.fillStyle='rgba(124,58,237,.10)'; ctx.fillRect(0,0,cw,ch); }
+    else { ctx.fillStyle='rgba(255,255,255,.14)'; ctx.fillRect(0,0,cw,ch); }
+    ctx.restore();
+    ctx.save();ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=6;ctx.lineJoin='round';ctx.lineCap='round';ctx.filter='blur(3px)';ctx.stroke(path);ctx.restore();
+    ctx.save();ctx.strokeStyle='rgba(255,255,255,.97)';ctx.lineWidth=2.6;ctx.lineJoin='round';ctx.lineCap='round';ctx.stroke(path);ctx.restore();
+    liveRAF=requestAnimationFrame(frame);
+  }
+  frame();
+}
+function flipCam(){ state.facing = state.facing==='user'?'environment':'user'; stopCam(document.getElementById('camLive')); startLive(); }
+function captureLive(){
+  const cv=document.getElementById('liveCanvas');
+  const a=document.createElement('a'); a.href=cv.toDataURL('image/jpeg',0.92); a.download='transparent-fit.jpg';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+</script>
+</body>
+</html>
