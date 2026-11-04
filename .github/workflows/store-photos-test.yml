@@ -1,0 +1,30 @@
+# Real photos of clothes hanging in shops (Wikimedia Commons) + the garment detector run on them.
+name: Store photos test
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths: ['tools/store_photos_test.py', '.github/workflows/store-photos-test.yml']
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: |
+          pip install --quiet torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet "ultralytics==8.3.40"
+          curl -L --fail -o deepfashion2_yolov8s-seg.pt https://huggingface.co/Bingsu/adetailer/resolve/main/deepfashion2_yolov8s-seg.pt
+          python tools/store_photos_test.py
+          cd out && zip -qr ../store-photos.zip . && cd ..
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: store-photos-test
+          name: Store photos test
+          body: Real shop photos (Wikimedia Commons, see results.json for licences) with the garment detector's output.
+          files: store-photos.zip
+          make_latest: false
