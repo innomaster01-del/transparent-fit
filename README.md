@@ -13,6 +13,18 @@ The **Android project is complete** (Gradle config, Manifest, MainActivity/Appli
 launcher icons, CI workflow). The **iOS project** contains the native modules
 (Swift + ObjC bridges) but needs an Xcode project shell — see tickets/01.
 
+## 📱 Web app (test on your phone)
+
+The full web app lives in **`docs/`** and runs entirely on the phone (body detection, clothes parser,
+live camera try-on, auto capture). Open it from GitHub Pages:
+
+**https://innomaster01-del.github.io/transparent-fit/**
+
+(GitHub → Settings → Pages → Source: "Deploy from a branch", branch `master`, folder `/docs`.)
+Hebrew guide: `docs/README-HE.md`. The previous test page is kept at `docs/old-test.html`.
+
+---
+
 ---
 
 ## What's in this repo
