@@ -1,0 +1,78 @@
+##############################################################################
+# Fetches and converts the garment models used by the app, and publishes them
+# as the "models" release (the app files in docs/ are then updated from it).
+#  - DeepFashion2 YOLOv8s-seg (13 garment types + outline)  -> ONNX
+#  - MediaPipe MagicTouch interactive segmenter (tap to cut) -> .task
+#  - onnxruntime-web (runs the ONNX model in the browser / APK)
+##############################################################################
+name: Fetch garment models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths: ['.github/workflows/fetch-models.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download the garment detector
+        run: |
+          mkdir -p out
+          curl -L --fail -o deepfashion2_yolov8s-seg.pt https://huggingface.co/Bingsu/adetailer/resolve/main/deepfashion2_yolov8s-seg.pt
+          ls -la deepfashion2_yolov8s-seg.pt
+
+      - name: Convert it to ONNX (640 and 416)
+        run: |
+          pip install --quiet "ultralytics==8.3.40" onnx onnxslim onnxruntime
+          python - <<'PY'
+          from ultralytics import YOLO
+          import shutil
+          m = YOLO('deepfashion2_yolov8s-seg.pt')
+          print('classes', m.names)
+          for sz in (640, 416):
+              p = m.export(format='onnx', imgsz=sz, opset=17, simplify=True, dynamic=False)
+              shutil.copy(p, f'out/df2_yolov8s_seg_{sz}.onnx')
+          import json; json.dump(m.names, open('out/df2_classes.json', 'w'))
+          PY
+          ls -la out
+
+      - name: Download MagicTouch (tap to segment)
+        run: |
+          curl -L --fail -o out/interactive_segmentation.task https://storage.googleapis.com/mediapipe-models/interactive_segmenter_v2/magic_touch/int8/latest/interactive_segmentation.task
+          ls -la out/interactive_segmentation.task
+
+      - name: Get onnxruntime-web
+        run: |
+          npm pack onnxruntime-web@1.20.1 --silent
+          tar xzf onnxruntime-web-1.20.1.tgz
+          ls package/dist | head -50
+          mkdir -p out/ort
+          cp package/dist/ort.wasm.min.js package/dist/ort-wasm-simd-threaded.wasm package/dist/ort-wasm-simd-threaded.mjs out/ort/ 2>/dev/null || true
+          cp package/dist/ort.min.js out/ort/ 2>/dev/null || true
+          cp package/LICENSE out/ort/LICENSE 2>/dev/null || true
+          ls -la out/ort
+          cd out && tar czf ort-web.tgz ort && cd ..
+
+      - name: Publish the "models" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: models
+          name: Garment models
+          body: Converted models used by the app (DeepFashion2 YOLOv8s-seg ONNX, MediaPipe MagicTouch, onnxruntime-web).
+          files: |
+            out/df2_yolov8s_seg_640.onnx
+            out/df2_yolov8s_seg_416.onnx
+            out/df2_classes.json
+            out/interactive_segmentation.task
+            out/ort-web.tgz
+          make_latest: false
