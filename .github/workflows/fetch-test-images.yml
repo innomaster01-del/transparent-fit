@@ -1,0 +1,60 @@
+##############################################################################
+# Downloads openly licensed photos of hanging clothes (Openverse: Creative
+# Commons / public domain) to test the garment detector. Publishes them as the
+# "test-images" release. Not part of the app.
+##############################################################################
+name: Fetch test photos (hanging clothes)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths: ['.github/workflows/fetch-test-images.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  photos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Search and download
+        run: |
+          mkdir -p imgs
+          python3 - <<'PY'
+          import json, urllib.request, urllib.parse, os, time
+          queries = ["shirt on hanger", "t-shirt hanging on hanger", "dress on hanger", "jeans on hanger", "trousers on hanger",
+                     "clothes hanging in store", "shirt hanging rack shop", "blouse on hanger", "jacket on hanger", "sweater on hanger"]
+          meta = []
+          for q in queries:
+              url = "https://api.openverse.org/v1/images/?" + urllib.parse.urlencode({"q": q, "page_size": 20, "license_type": "all"})
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "transparent-fit-tests"})
+                  data = json.load(urllib.request.urlopen(req, timeout=30))
+              except Exception as e:
+                  print("search failed", q, e); continue
+              for r in data.get("results", []):
+                  src = r.get("thumbnail") or r.get("url")
+                  name = f"{len(meta):03d}.jpg"
+                  try:
+                      req = urllib.request.Request(src, headers={"User-Agent": "transparent-fit-tests"})
+                      b = urllib.request.urlopen(req, timeout=30).read()
+                      if len(b) < 5000: continue
+                      open("imgs/" + name, "wb").write(b)
+                      meta.append({"file": name, "query": q, "title": r.get("title"), "license": r.get("license"), "creator": r.get("creator"), "source": r.get("foreign_landing_url")})
+                  except Exception as e:
+                      print("download failed", src, e)
+              time.sleep(1)
+          json.dump(meta, open("imgs/credits.json", "w"), indent=1)
+          print(len(meta), "photos")
+          PY
+          cd imgs && zip -q ../test-photos.zip * && cd .. && ls -la test-photos.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-images
+          name: Test photos (hanging clothes)
+          body: Openly licensed photos from Openverse used to test the garment detector. Credits in credits.json.
+          files: test-photos.zip
+          make_latest: false
