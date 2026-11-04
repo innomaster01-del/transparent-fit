@@ -6,8 +6,8 @@ android {
         applicationId 'com.transparentfit.web'
         minSdk 26
         targetSdk 34
-        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
-        versionName '2.0.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+        versionCode = Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+        versionName = "2.0." + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
     }
     signingConfigs {
         // a fixed key kept in the repo, so every new APK installs over the previous one
