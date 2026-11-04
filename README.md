@@ -21,6 +21,9 @@ live camera try-on, auto capture). Open it from GitHub Pages:
 **https://innomaster01-del.github.io/transparent-fit/**
 
 (GitHub → Settings → Pages → Source: "Deploy from a branch", branch `master`, folder `/docs`.)
+
+**Android APK of the same app:** https://github.com/innomaster01-del/transparent-fit/releases/tag/latest-apk
+(built automatically by `.github/workflows/build-web-apk.yml` from `docs/` + `android-web/` on every push).
 Hebrew guide: `docs/README-HE.md`. The previous test page is kept at `docs/old-test.html`.
 
 ---

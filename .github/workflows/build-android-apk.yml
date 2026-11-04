@@ -12,19 +12,10 @@
 # The workflow also runs automatically on every push to main.
 ##############################################################################
 
-name: Build Android APK
+name: Build Android APK (old React Native app)
 
 on:
-  workflow_dispatch:        # manual "Run workflow" button
-  push:
-    branches: [main, master]
-    paths:
-      - 'src/**'
-      - 'android/**'
-      - 'App.tsx'
-      - 'index.js'
-      - 'package.json'
-      - '.github/workflows/build-android-apk.yml'
+  workflow_dispatch:        # manual only (the web-app APK is built by build-web-apk.yml)
 
 permissions:
   contents: write   # needed so the workflow can publish/update the GitHub Release below
@@ -111,7 +102,7 @@ jobs:
       - name: Publish/update "latest" GitHub Release with the APK attached
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-apk
-          name: Latest build
+          tag_name: latest-apk-rn
+          name: Old React Native build
           body: Auto-built from the latest push/run. Download app-release.apk below.
           files: android/app/build/outputs/apk/release/app-release.apk

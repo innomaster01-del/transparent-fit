@@ -1,0 +1,69 @@
+##############################################################################
+# Builds the Transparent Fit APK from the web app in docs/ (everything runs on
+# the phone: camera, body detection, clothes parser). Runs on every push that
+# changes docs/ or android-web/, and from the Actions tab ("Run workflow").
+# The APK is attached to the "latest-apk" release:
+#   https://github.com/innomaster01-del/transparent-fit/releases/tag/latest-apk
+##############################################################################
+name: Build Android APK (web app)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths:
+      - 'docs/**'
+      - 'android-web/**'
+      - '.github/workflows/build-web-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Pack the web app into the APK
+        run: python3 android-web/prepare_assets.py
+
+      - name: Build the APK
+        run: |
+          set +e
+          gradle -p android-web assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::TAIL40=$(tail -40 /tmp/build.log | tr -d '\r' | tr '\n' '~')"
+          fi
+          exit $STATUS
+
+      - name: Name the APK
+        run: cp android-web/app/build/outputs/apk/release/app-release.apk TransparentFit.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TransparentFit-APK
+          path: TransparentFit.apk
+          retention-days: 30
+
+      - name: Publish to the "latest-apk" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: Transparent Fit — latest APK
+          body: |
+            Transparent Fit (web app inside an Android app). Download **TransparentFit.apk** below and open it on the phone
+            (allow "install from unknown sources" once). New versions install over the old one.
+          files: TransparentFit.apk
+          make_latest: true

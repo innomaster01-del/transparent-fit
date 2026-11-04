@@ -1,0 +1,20 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.transparentfit.web'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.transparentfit.web'
+        minSdk 26
+        targetSdk 34
+        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionName '2.0.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+    }
+    signingConfigs {
+        // a fixed key kept in the repo, so every new APK installs over the previous one
+        release { storeFile file('../transparentfit.keystore'); storePassword 'transparentfit'; keyAlias 'tf'; keyPassword 'transparentfit' }
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    androidResources { noCompress += ['wasm', 'bin', 'json', 'mjs'] }
+}
+dependencies { implementation 'androidx.webkit:webkit:1.11.0' }
