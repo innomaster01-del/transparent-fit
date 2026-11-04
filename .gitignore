@@ -7,3 +7,7 @@ android/.gradle/
 android/app/debug.keystore
 *.log
 .DS_Store
+android-web/app/src/main/assets/www/
+android-web/app/build/
+android-web/.gradle/
+android-web/build/
