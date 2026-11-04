@@ -33,7 +33,8 @@ jobs:
 
       - name: Convert it to ONNX (640 and 416)
         run: |
-          pip install --quiet "ultralytics==8.3.40" onnx onnxslim onnxruntime
+          pip install --quiet torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet "ultralytics==8.3.40" onnx onnxslim onnxruntime onnxscript
           python - <<'PY'
           from ultralytics import YOLO
           import shutil
