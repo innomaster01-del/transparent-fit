@@ -3,13 +3,15 @@
 // phones on their next open. (The previous worker served everything
 // cache-first under a name that never changed, so an installed phone never
 // saw an update again.)
-const VERSION = "tf-v11";
+const VERSION = "tf-v12";
 
 const FILES = [
   "./", "index.html", "manifest.webmanifest",
   "vision_bundle.mjs", "vision_wasm_internal.js", "vision_wasm_internal.wasm",
   "models/seg-1.wasm", "models/seg-2.wasm", "models/pose.wasm",
-  "parser-worker.js", "models/parser.json", "models/parser-1.wasm", "models/parser-2.wasm", "models/kern.wasm",
+  "parser-worker.js", "garment-worker.js", "vendor/ort/ort.wasm.min.js", "vendor/ort/ort-wasm-simd-threaded.wasm", "vendor/ort/ort-wasm-simd-threaded.mjs",
+  "models/garment-1.wasm", "models/garment-2.wasm", "models/garment-3.wasm", "models/garment-4.wasm",
+  "models/magictouch-1.wasm", "models/magictouch-2.wasm", "models/magictouch-3.wasm", "models/parser.json", "models/parser-1.wasm", "models/parser-2.wasm", "models/kern.wasm",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png",
 ];
 

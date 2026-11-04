@@ -211,6 +211,10 @@ body { background: radial-gradient(80% 60% at 50% 40%, #17121f, #050406); }
 .t-sub { height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .t-stage { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; }   /* its own layer, below header and tray: the camera preview must not swallow their taps */
 .t-view { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: hidden; background: #000; }
+.gpick { position: absolute; inset: 0; z-index: 5; background: #000; }
+.gpick canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.pick-tip { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 124px); transform: translateX(-50%); background: rgba(20,17,25,.82); color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.pick-x { position: absolute; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 172px); }
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 2; }
 .flash.go { animation: flash 0.45s ease-out; }
 @keyframes flash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
@@ -435,6 +439,7 @@ body { background: radial-gradient(80% 60% at 50% 40%, #17121f, #050406); }
     </header>
     <div class="t-stage">
       <div class="t-view"><div class="flash" id="flash"></div>
+        <div class="gpick" id="pickLayer" hidden><canvas id="pickCv"></canvas><div class="pick-tip" id="pickTip">Tap the garment</div><button class="tool pick-x" id="pickClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
         <canvas id="cv"></canvas>
         <div class="cap-layer" id="capLayer" hidden>
           <video id="capVideo" playsinline muted></video>
@@ -465,6 +470,7 @@ body { background: radial-gradient(80% 60% at 50% 40%, #17121f, #050406); }
       <div id="ui3" class="t-step" hidden>
         <div class="capbar" id="capBar" hidden>
           <button class="btn small ghost" id="capLive"><span class="ldot"></span>Next</button>
+          <button class="btn small ghost" id="capFix" aria-label="Mark the garment yourself">Fix</button>
           <button class="btn small" id="capSave">Save to wardrobe</button>
         </div>
         <div class="tools" id="tTools">
@@ -633,7 +639,7 @@ async function loadAI() {
         baseOptions: { modelAssetBuffer: poseBytes, delegate: "CPU" },
         runningMode: "IMAGE", numPoses: 1,
       });
-      return { seg, pose };
+      return { seg, pose, mp, fileset };
     } catch (e) { console.warn("detection engine source failed", t.mod, e); lastErr = e; }
   }
   const err = new Error("The detection engine couldn't start" + (lastErr && lastErr.message ? " (" + String(lastErr.message).slice(0, 80) + ")" : "") + ".");
@@ -2298,7 +2304,9 @@ function steadyWatch(f, vw, vh) {
   if (rms < 6) steady.still++; else steady.still = 0;
   if (S.set.auto === "off" || S.paused || S.step !== 3 || !cam.on || !cam.useLive || now < (aim.cool || 0)) return;
   // still for ~0.7 s after moving, with something in view (not a blank wall)
-  if (steady.moved && steady.still >= 6 && varc > 60) {
+  const seesGarment = gd.det && now - gd.det.at < 2000 && gd.settled && gd.seen.length >= 2;
+  if ((steady.moved || seesGarment) && steady.still >= (seesGarment ? 5 : 6) && varc > 60 && !(seesGarment && steady.lastName === gd.det.name && !steady.moved)) {
+    steady.lastName = seesGarment ? gd.det.name : null;
     steady.moved = false; steady.still = 0;
     setPaused(true, true);
     const fl = $("flash"); fl.classList.remove("go"); void fl.offsetWidth; fl.classList.add("go");
@@ -2415,25 +2423,153 @@ function mirrorShape(s) {
     sleeves: s.sleeves && s.sleeves.map((q) => q && { ...q, side: -q.side, a: m(q.a), b: m(q.b) }),
     legs: s.legs && s.legs.map((q) => ({ ...q, a: m(q.a), b: m(q.b) })).reverse() };
 }
-/** The camera as a window: its picture fills the screen behind your photo, like a camera preview, and the
- *  cut-out shows exactly what is behind it. Nothing is detected or warped, so it never jumps or smears:
- *  you move the phone until the garment fills the cut-out (pinch to zoom). */
+/* =========================================================================
+   Garment detector (YOLOv8s-seg, DeepFashion2): what garment the camera sees, where, and its outline.
+   It runs in a worker about once a second; the camera picture itself never waits for it.
+   ========================================================================= */
+const GD_NAMES = { short_sleeved_shirt: "Short-sleeve top", long_sleeved_shirt: "Long-sleeve top", short_sleeved_outwear: "Short-sleeve jacket",
+  long_sleeved_outwear: "Long-sleeve jacket", vest: "Sleeveless top", sling: "Strap top", shorts: "Shorts", trousers: "Trousers", skirt: "Skirt",
+  short_sleeved_dress: "Short-sleeve dress", long_sleeved_dress: "Long-sleeve dress", vest_dress: "Sleeveless dress", sling_dress: "Strap dress" };
+const GD_SLOT = (n) => (/shorts|trousers|skirt/.test(n) ? "bottom" : /dress/.test(n) ? "dress" : "top");
+const gd = { w: null, busy: false, ready: false, failed: false, det: null, seen: [], view: null, capShape: null, capFor: null, small: null, manualAt: 0 };
+function gdWorker() {
+  if (gd.w || gd.failed) return gd.w;
+  try {
+    gd.w = new Worker("garment-worker.js");
+    gd.w.onerror = () => { gd.failed = true; gd.busy = false; };
+  } catch (e) { gd.failed = true; }
+  return gd.w;
+}
+/** Ask the detector about one frame (scaled to 360 px wide). */
+function gdAsk(f, vw, vh, cb) {
+  const w = gdWorker(); if (!w || gd.busy) return false;
+  const sw = 360, sh = Math.round(sw * vh / vw), c = gd.small && gd.small.height === sh ? gd.small : (gd.small = mkc(sw, sh));
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(f, 0, 0, sw, sh);
+  const rgba = g.getImageData(0, 0, sw, sh).data;
+  gd.busy = true;
+  w.onmessage = (e) => { gd.busy = false; const d = e.data; if (d.cmd === "error") { console.warn("garment detector:", d.msg); gd.failed = true; return; } gd.ready = true; cb(d, sw, sh); };
+  w.postMessage({ cmd: "detect", base: "", id: Date.now(), rgba, w: sw, h: sh }, [rgba.buffer]);
+  return true;
+}
+function gdLive(f, vw, vh) {
+  if (!cam.on || !cam.useLive || cam.frozen || S.step !== 3) return;
+  gdAsk(f, vw, vh, (d) => {
+    const top = d.dets && d.dets[0];
+    const now = performance.now();
+    if (top && top.p > 0.45) {
+      gd.det = { ...top, at: now };
+      gd.seen.push(top.name); if (gd.seen.length > 3) gd.seen.shift();
+      // the same garment twice in a row: say what it is, and switch the mode to it
+      if (top.p > 0.6 || (gd.seen.length >= 2 && gd.seen.slice(-2).every((n) => n === top.name))) gdSuggest(top.name);
+    } else if (gd.det && now - gd.det.at > 2500) { gd.det = null; gd.seen.length = 0; }
+    gdLabel();
+    schedule();
+  });
+}
+function gdLabel() {
+  const el = $("tSub"); if (!el || S.step !== 3) return;
+  el.textContent = gd.det ? GD_NAMES[gd.det.name] + " found" : (cam.on && cam.useLive && !gd.failed ? "Point at a garment" : "Point at clothes");
+}
+/** Switch to the garment the camera sees (unless you picked a mode yourself a moment ago). */
+function gdSuggest(name) {
+  if (performance.now() - gd.manualAt < 8000) return;
+  const slot = GD_SLOT(name);
+  if (S.mode === "full") { if ((slot === "top" || slot === "bottom") && S.activeSlot !== slot) { S.activeSlot = slot; updateThumb(); } return; }
+  const want = slot === "bottom" ? "pants" : slot === "dress" ? (S.set.style === "men" ? "shirt" : "dress") : "shirt";
+  if (want === "pants" && !fullBody(S.A)) return;
+  let changed = false;
+  if (S.mode !== want) { setMode(want, true); changed = true; }
+  if (want === "shirt") { const sl = /long/.test(name) ? "long" : "short"; if (S.opt.sleeve !== sl) { S.opt.sleeve = sl; changed = true; } }
+  if (want === "pants") { const lg = name === "shorts" ? "shorts" : "long"; if (S.opt.leg !== lg) { S.opt.leg = lg; changed = true; } }
+  if (changed) { mainCache.key = null; renderOpts(); toast(GD_NAMES[name] + " — fitted to it", 1600); }
+}
+/** On a captured picture: the garment's exact outline, so it can be put on you part by part. */
+function gdCapture(f, vw, vh, tries = 0) {
+  if (tries === 0) { gd.capShape = null; gd.capFor = f;
+    setTimeout(() => { if (gd.capFor === f && !gd.capShape && S.captured) toast("Garment not found by itself — tap Fix and touch it", 3200); }, 4500); }
+  if (gd.capFor !== f || gd.failed) return;
+  if (gd.busy) { if (tries < 80) setTimeout(() => gdCapture(f, vw, vh, tries + 1), 100); return; }   // wait for the live request to finish
+  gdAsk(f, vw, vh, (d) => {
+    if (gd.capFor !== f || !d.mask || !d.dets.length) return;
+    const top = d.dets[0], m = d.mask, SW = 112, SH = Math.round(SW * vh / vw), seen = new Uint8Array(SW * SH);
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+      const mx = Math.round(m.px + (x + 0.5) / SW * m.nw), my = Math.round(m.py + (y + 0.5) / SH * m.nh);
+      if (mx >= 0 && my >= 0 && mx < m.size && my < m.size && m.data[my * m.size + mx] > 127) seen[y * SW + x] = 1;
+    }
+    let shape = null; try { shape = garmentShape(seen, SW, SH); } catch (e) { shape = null; }
+    if (shape) { shape.mask = seen; shape.SW = SW; shape.SH = SH; shape.name = top.name; }
+    gd.capShape = shape; gd.det = { ...top, at: performance.now() };
+    mainCache.key = null; schedule();
+  });
+}
+/** The camera as a window behind your photo. When the detector sees a garment, the window glides so the
+ *  garment fills the cut-out (it zooms in on a garment that is a bit far). Pinch to zoom yourself. */
 function drawCameraInto(R, V) {
   const f = camFrame(), vw = f.videoWidth || f.width, vh = f.videoHeight || f.height;
   const b = R.buf, bg = b.getContext("2d"), W = b.width, H = b.height;
   bg.globalCompositeOperation = "source-over"; bg.clearRect(0, 0, W, H);
   const mirror = cam.facing === "user", z = Math.max(1, Math.min(4, cam.zoom || 1));
-  const k = Math.max(W / vw, H / vh) * z, w = vw * k, h = vh * k, x = (W - w) / 2, y = (H - h) / 2;
+  // where the window wants to be: the plain camera view, or framed on the garment
+  const k0 = Math.max(W / vw, H / vh);
+  let tk = k0 * z, tx = (W - vw * tk) / 2, ty = (H - vh * tk) / 2;
+  const det = gd.det && performance.now() - gd.det.at < 2500 ? gd.det : null;
+  if (det) {
+    let [x0, y0, x1, y1] = det.box; if (mirror) [x0, x1] = [1 - x1, 1 - x0];
+    const bw = (x1 - x0) * vw, bh = (y1 - y0) * vh, B = R.box;
+    tk = Math.max(k0, Math.min(k0 * 4, Math.min(B.w / bw, B.h / bh) * 1.06)) * z;
+    tx = B.x + B.w / 2 - (x0 + x1) / 2 * vw * tk; ty = B.y + B.h / 2 - (y0 + y1) / 2 * vh * tk;
+  }
+  const v = gd.view || (gd.view = { k: tk, x: tx, y: ty });
+  if (!cam.frozen) { const a = 0.14; v.k += (tk - v.k) * a; v.x += (tx - v.x) * a; v.y += (ty - v.y) * a; }   // glide, never jump
+  gd.settled = Math.abs(tk - v.k) < tk * 0.03 && Math.abs(tx - v.x) < W * 0.02 && Math.abs(ty - v.y) < H * 0.02;
+  const k = v.k, w = vw * k, h = vh * k, x = v.x, y = v.y;
   bg.save(); bg.imageSmoothingQuality = "high";
   if (V.light && !cam.torch) bg.filter = "brightness(1.18) contrast(1.04)";
   if (mirror) { bg.translate(x + w, y); bg.scale(-1, 1); bg.drawImage(f, 0, 0, w, h); } else bg.drawImage(f, x, y, w, h);
   bg.restore();
+  // the garment's own parts onto yours, when the whole garment was in view
+  const shape = cam.frozen && gd.capShape;
+  cam.fitted = false;
+  if (R.fit && shape && S.set.fit !== "off") {
+    const sw0 = Math.min(720, vw), sh0 = Math.round(sw0 * vh / vw);
+    const sb = cam.srcBuf && cam.srcBuf.width === sw0 && cam.srcBuf.height === sh0 ? cam.srcBuf : (cam.srcBuf = mkc(sw0, sh0)), sg = sb.getContext("2d");
+    sg.globalCompositeOperation = "source-over"; sg.clearRect(0, 0, sw0, sh0); sg.drawImage(f, 0, 0, sw0, sh0);
+    // only the garment itself, not the wall behind it: its outline becomes the picture's alpha
+    if (shape.mask) {
+      const mc = cam.maskBuf && cam.maskBuf.width === shape.SW && cam.maskBuf.height === shape.SH ? cam.maskBuf : (cam.maskBuf = mkc(shape.SW, shape.SH));
+      const mg = mc.getContext("2d"), id = mg.createImageData(shape.SW, shape.SH);
+      for (let i = 0; i < shape.mask.length; i++) id.data[i * 4 + 3] = shape.mask[i] ? 255 : 0;
+      mg.putImageData(id, 0, 0);
+      sg.globalCompositeOperation = "destination-in"; sg.imageSmoothingEnabled = true; sg.filter = `blur(${(sw0 / shape.SW * 0.6).toFixed(1)}px)`; sg.drawImage(mc, 0, 0, sw0, sh0); sg.filter = "none"; sg.globalCompositeOperation = "source-over";   // soft, not stair-stepped
+    }
+    const fb = R.fitBuf || (R.fitBuf = mkc(b.width, b.height)), fg2 = fb.getContext("2d");
+    fg2.globalCompositeOperation = "source-over"; fg2.clearRect(0, 0, fb.width, fb.height);
+    fg2.save(); if (V.light && !cam.torch) fg2.filter = "brightness(1.22) contrast(1.04)";
+    try { cam.fitted = drawFitted(fg2, sb, shape, R.fit); } catch (e) { console.warn(e); }
+    fg2.restore();
+    if (cam.fitted) {
+      if (R.shade) { fg2.globalCompositeOperation = "source-atop"; fg2.globalAlpha = 0.28; fg2.drawImage(R.shade, 0, 0); fg2.globalAlpha = 1; }
+      if (R.person && R.own) {
+        // under the new garment: your old garment hidden by fabric, bare skin left as it is in the photo
+        const tmp = R.tmpBuf || (R.tmpBuf = mkc(b.width, b.height)), tg = tmp.getContext("2d");
+        tg.globalCompositeOperation = "source-over"; tg.clearRect(0, 0, tmp.width, tmp.height); tg.drawImage(b, 0, 0);
+        tg.globalCompositeOperation = "destination-in"; tg.drawImage(R.own, 0, 0);
+        bg.globalCompositeOperation = "source-over"; bg.clearRect(0, 0, b.width, b.height);
+        bg.drawImage(R.person, 0, 0); bg.drawImage(tmp, 0, 0);
+      }
+      bg.drawImage(fb, 0, 0);
+      // the garment reaches past your own (a crew neck over a scoop neck, a longer hem): it is drawn over
+      // the photo there too, except where your face, hair, hands or arms are in front of it
+      if (R.protect) { fg2.globalCompositeOperation = "destination-out"; fg2.drawImage(R.protect, 0, 0); }
+      fg2.globalCompositeOperation = "source-over";
+    }
+  }
   if (R.shade) { bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = 0.22; bg.drawImage(R.shade, 0, 0); bg.globalAlpha = 1; }
   bg.globalCompositeOperation = "destination-in"; bg.drawImage(R.mask, 0, 0);
   bg.globalCompositeOperation = "source-over";
   cam.map = { x, y, w, h, vw, vh, mirror };
-  R.over = null;
-  steadyWatch(f, vw, vh);
+  R.over = cam.fitted ? R.fitBuf : null;
+  if (!cam.frozen) { steadyWatch(f, vw, vh); gdLive(f, vw, vh); }
   return b;
 }
 function updateLiveUI() {
@@ -2630,6 +2766,7 @@ function renderOpts() {
 function setOpt(k, v) {
   if (k === "full") { S.opt.sleeve = v === "long" ? "long" : "short"; S.opt.leg = v === "long" ? "long" : "shorts"; }
   else S.opt[k] = v;
+  gd.manualAt = performance.now();
   mainCache.key = null; renderOpts(); renderTryOn();
 }
 function syncModes() {
@@ -2653,7 +2790,7 @@ function setMode(m, quiet) {
   renderOpts();
   schedule();
 }
-document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => { gd.manualAt = performance.now(); setMode(b.dataset.mode); }));
 $("tLight").addEventListener("click", async () => {
   S.light = !S.light; $("tLight").setAttribute("aria-pressed", String(S.light));
   cam.torch = false;
@@ -2668,10 +2805,11 @@ $("tFlip").addEventListener("click", () => {
 /** Pause, or "capture": the camera frame stands still so the result can be looked at calmly. */
 function setPaused(on, captured) {
   if (on && !S.paused) cam.frozen = null;
+  if (!on) { gd.capShape = null; gd.capFor = null; }
   S.paused = on; S.captured = !!(on && captured);
   $("tPause").setAttribute("aria-pressed", String(on));
   if (!on) { cam.frozen = null; aim.cool = performance.now() + 1500; if (aim.hist) aim.hist.length = 0; steady.moved = false; steady.still = 0; }
-  else if (!cam.frozen && camFrame()) { const f = camFrame(), c = mkc(f.videoWidth, f.videoHeight); c.getContext("2d").drawImage(f, 0, 0); cam.frozen = c; }
+  else if (!cam.frozen && camFrame()) { const f = camFrame(), c = mkc(f.videoWidth, f.videoHeight); c.getContext("2d").drawImage(f, 0, 0); cam.frozen = c; gdCapture(c, c.width, c.height); }
   $("pauseIc").innerHTML = on ? '<path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor"/>' : '<path d="M8.5 5.5v13M15.5 5.5v13" stroke-width="3.2"/>';
   $("capBar").hidden = !S.captured; $("tTools").hidden = S.captured;
   $("liveDot").classList.toggle("still", on); $("liveTxt").textContent = S.captured ? "Captured" : on ? "Paused" : "Live";
@@ -2679,6 +2817,61 @@ function setPaused(on, captured) {
 }
 $("tPause").addEventListener("click", () => { setPaused(!S.paused); toast(S.paused ? "Paused" : "Live", 1200); });
 $("capLive").addEventListener("click", () => { setPaused(false); toast("Live", 1000); });
+/* ---------- tap to mark the garment (MediaPipe MagicTouch) ---------- */
+const magic = { seg: null, loading: null };
+async function magicSeg() {
+  if (magic.seg) return magic.seg;
+  if (!S.ai || !S.ai.mp) throw new Error("engine not ready");
+  magic.loading = magic.loading || (async () => {
+    const buf = await bytes(["models/magictouch-1.wasm", "models/magictouch-2.wasm", "models/magictouch-3.wasm"]);
+    return S.ai.mp.InteractiveSegmenter.createFromOptions(S.ai.fileset, { baseOptions: { modelAssetBuffer: buf, delegate: "CPU" } });
+  })();
+  magic.seg = await magic.loading; return magic.seg;
+}
+function openPick() {
+  const f = cam.frozen; if (!f) return;
+  const L = $("pickLayer"), c = $("pickCv"); L.hidden = false;
+  const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1); c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  const g = c.getContext("2d"), k = Math.min(c.width / f.width, c.height / f.height), w = f.width * k, h = f.height * k, x = (c.width - w) / 2, y = (c.height - h) / 2;
+  g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height);
+  const mirror = cam.facing === "user";
+  g.save(); if (mirror) { g.translate(x + w, y); g.scale(-1, 1); g.drawImage(f, 0, 0, w, h); } else g.drawImage(f, x, y, w, h); g.restore();
+  c._map = { x, y, w, h, dpr, mirror };
+  $("pickTip").textContent = "Tap the garment";
+}
+$("capFix").addEventListener("click", openPick);
+$("pickClose").addEventListener("click", () => { $("pickLayer").hidden = true; });
+$("pickCv").addEventListener("click", async (e) => {
+  const c = $("pickCv"), m = c._map, f = cam.frozen; if (!m || !f) return;
+  const r = c.getBoundingClientRect(); let u = ((e.clientX - r.left) * m.dpr - m.x) / m.w, v = ((e.clientY - r.top) * m.dpr - m.y) / m.h;
+  if (u < 0 || v < 0 || u > 1 || v > 1) return;
+  if (m.mirror) u = 1 - u;
+  $("pickTip").textContent = "Cutting out the garment…";
+  try {
+    const seg = await magicSeg();
+    seg.setImage(f);
+    // a tap is a one-point stroke; the brush code for "this is it" differs between engine builds, so the
+    // mask that actually contains the tapped point is the one used
+    let mk = null, arr = null, fw = 0, fh = 0;
+    for (const mode of [1, 0, 2]) {
+      const m = seg.segment([{ isCompleted: true, brushMode: mode, point: [{ x: u, y: v }] }]);
+      const a = m.getAsFloat32Array(), w = m.width, h = m.height, at = a[Math.min(h - 1, Math.floor(v * h)) * w + Math.min(w - 1, Math.floor(u * w))];
+      let area = 0; for (let i = 0; i < a.length; i += 7) if (a[i] > 0.5) area++;
+      if (at > 0.5 && area < a.length / 7 * 0.9) { mk = m; arr = a; fw = w; fh = h; break; }
+      m.close && m.close();
+    }
+    if (!mk) throw new Error("no mask at the tapped point");
+    const res = mk;
+    const SW = 112, SH = Math.round(SW * f.height / f.width), seen = new Uint8Array(SW * SH);
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) { const px = Math.min(fw - 1, Math.floor((x + 0.5) / SW * fw)), py = Math.min(fh - 1, Math.floor((y + 0.5) / SH * fh)); if (arr[py * fw + px] > 0.5) seen[y * SW + x] = 1; }
+    res.close && res.close();
+    let shape = null; try { shape = garmentShape(seen, SW, SH); } catch (er) { shape = null; }
+    if (!shape) { $("pickTip").textContent = "Couldn't find its outline. Tap the middle of the garment, or step back so all of it is in view."; return; }
+    shape.mask = seen; shape.SW = SW; shape.SH = SH;
+    gd.capShape = shape; gd.capFor = f; mainCache.key = null; schedule();
+    $("pickLayer").hidden = true; toast("Garment marked", 1400);
+  } catch (er) { console.warn("magic", er && er.stack); $("pickTip").textContent = "Couldn't cut it out here. Try again."; }
+});
 $("capSave").addEventListener("click", async () => { await saveCameraGarment(); setPaused(false); });
 
 /* =========================================================================
@@ -3283,7 +3476,7 @@ let tap = null;
 cv.addEventListener("pointerdown", (e) => {
   tap = null;
   if (S.step !== 3) return;
-  if (S.captured) { tap = { x: e.clientX, y: e.clientY, t: performance.now(), resume: true }; return; }
+  if (S.captured) { tap = { x: e.clientX, y: e.clientY, t: e.timeStamp, resume: true }; return; }
   if (S.paused) return;
   const p = partAt(e); if (!p) return;
   const picked = S.activeSlot !== p.slot;
@@ -3291,7 +3484,7 @@ cv.addEventListener("pointerdown", (e) => {
   if (cam.on && cam.useLive) {                     // live: a tap captures (or first picks the piece); two fingers zoom the camera
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); cv.setPointerCapture(e.pointerId);
     if (pts.size > 1) { tap = null; return; }
-    if (!picked) tap = { x: e.clientX, y: e.clientY, t: performance.now() };
+    if (!picked) tap = { x: e.clientX, y: e.clientY, t: e.timeStamp };
     return;
   }
   if (!S.wear[p.slot]) return;
@@ -3317,7 +3510,7 @@ cv.addEventListener("pointermove", (e) => {
 const lift = (e) => {
   pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) drag = null;
   const tp = tap; tap = null;
-  if (!tp || e.type !== "pointerup" || performance.now() - tp.t > 600 || Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > 12) return;
+  if (!tp || e.type !== "pointerup" || e.timeStamp - tp.t > 600 || Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > 12) return;
   if (tp.resume) { setPaused(false); toast("Live", 1000); }
   else if (cam.on && cam.useLive && camFrame()) { setPaused(true, true); toast("Captured. Save it, or go back to live for the next one.", 2600); }
 };
