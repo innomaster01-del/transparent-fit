@@ -39,11 +39,14 @@ jobs:
           from ultralytics import YOLO
           import shutil
           m = YOLO('deepfashion2_yolov8s-seg.pt')
-          print('classes', m.names)
+          import torch; print('torch', torch.__version__); print('classes', m.names)
           for sz in (640, 416):
-              p = m.export(format='onnx', imgsz=sz, opset=17, simplify=True, dynamic=False)
+              p = m.export(format='onnx', imgsz=sz, opset=12, simplify=False, dynamic=False)
               shutil.copy(p, f'out/df2_yolov8s_seg_{sz}.onnx')
           import json; json.dump(m.names, open('out/df2_classes.json', 'w'))
+          import onnxruntime as ort, numpy as np
+          for sz in (640, 416):
+              s = ort.InferenceSession(f'out/df2_yolov8s_seg_{sz}.onnx'); o = s.run(None, {s.get_inputs()[0].name: np.zeros((1, 3, sz, sz), np.float32)}); print(sz, [x.shape for x in o])
           PY
           ls -la out
 
