@@ -3,7 +3,7 @@
 // phones on their next open. (The previous worker served everything
 // cache-first under a name that never changed, so an installed phone never
 // saw an update again.)
-const VERSION = "tf-v12";
+const VERSION = "tf-v13";
 
 const FILES = [
   "./", "index.html", "manifest.webmanifest",
