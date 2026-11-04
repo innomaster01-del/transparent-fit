@@ -2300,13 +2300,19 @@ function steadyWatch(f, vw, vh) {
   let rms = 99;
   if (steady.prev) { let s = 0; for (let i = 0; i < 1024; i++) s += (cur[i] - steady.prev[i]) ** 2; rms = Math.sqrt(s / 1024); }
   steady.prev = cur;
-  if (rms > 14) { steady.moved = true; steady.still = 0; return; }
+  if (rms > 14) { steady.moved = true; steady.still = 0; }
+  if (gd.det == null && steady.lastBox && steady.moved) { steady.lastBox = null; steady.lastName = null; }   // you looked away: the next garment may be the same kind
   if (rms < 6) steady.still++; else steady.still = 0;
   if (S.set.auto === "off" || S.paused || S.step !== 3 || !cam.on || !cam.useLive || now < (aim.cool || 0)) return;
   // still for ~0.7 s after moving, with something in view (not a blank wall)
-  const seesGarment = gd.det && now - gd.det.at < 2000 && gd.settled && gd.seen.length >= 2;
-  if ((steady.moved || seesGarment) && steady.still >= (seesGarment ? 5 : 6) && varc > 60 && !(seesGarment && steady.lastName === gd.det.name && !steady.moved)) {
-    steady.lastName = seesGarment ? gd.det.name : null;
+  steady.calm = rms < 16 ? (steady.calm || 0) + 1 : 0;
+  // the same garment found twice in a row in the same place, the framing has arrived, and the phone isn't
+  // swinging: that is the moment. A hand-held phone always shakes a little, so pixel stillness isn't required.
+  const ready = gd.det && now - gd.det.at < 1800 && (gd.stable || 0) >= 2 && gd.settled && !gd.crowded && steady.calm >= 3;
+  // not the same garment again after Next, until you aim at another one
+  const fresh = !steady.lastBox || gd.det && (gd.det.name !== steady.lastName || boxIoU(gd.det.box, steady.lastBox) < 0.5);
+  if (ready && fresh) {
+    steady.lastName = gd.det.name; steady.lastBox = gd.det.box;
     steady.moved = false; steady.still = 0;
     setPaused(true, true);
     const fl = $("flash"); fl.classList.remove("go"); void fl.offsetWidth; fl.classList.add("go");
@@ -2454,18 +2460,35 @@ function gdAsk(f, vw, vh, cb) {
 function gdLive(f, vw, vh) {
   if (!cam.on || !cam.useLive || cam.frozen || S.step !== 3) return;
   gdAsk(f, vw, vh, (d) => {
-    const top = d.dets && d.dets[0];
+    const top = d.dets && d.dets[0], second = d.dets && d.dets[1];
     const now = performance.now();
-    if (top && top.p > 0.45) {
+    // one clear garment: confident, and not one of several similar ones side by side (a packed rack)
+    const crowded = top && second && second.p > top.p * 0.6 && second.name.split("_").pop() === top.name.split("_").pop();
+    // measured on real shop photos: one garment held out scores 0.85–0.98, a packed rack read as one "garment" 0.5–0.65
+    const SURE = 0.68;
+    gd.crowded = !!(top && (crowded || top.p < SURE) && top.p > 0.3);
+    if (gd.crowded && now - (gd.hintAt || 0) > 9000) { gd.hintAt = now; toast("Too many clothes in view. Take one garment out from the rack, or hold it up.", 3600); }
+    if (top && top.p >= SURE && !crowded) {
+      const prev = gd.det, same = prev && now - prev.at < 2500 && prev.name === top.name && boxIoU(prev.box, top.box) > 0.7;
+      gd.stable = same ? (gd.stable || 1) + 1 : 1;
       gd.det = { ...top, at: now };
       gd.seen.push(top.name); if (gd.seen.length > 3) gd.seen.shift();
       // the same garment twice in a row: say what it is, and switch the mode to it
-      if (top.p > 0.6 || (gd.seen.length >= 2 && gd.seen.slice(-2).every((n) => n === top.name))) gdSuggest(top.name);
-    } else if (gd.det && now - gd.det.at > 2500) { gd.det = null; gd.seen.length = 0; }
+      if (top.p > 0.85 || (gd.seen.length >= 2 && gd.seen.slice(-2).every((n) => n === top.name))) gdSuggest(top.name);
+    } else {
+      gd.stable = 0; if (gd.det && now - gd.det.at > 2500) { gd.det = null; gd.seen.length = 0; }
+      // nothing found for a while although the phone points at something: usually the garment is too close
+      // (cut off at the edges), and the detector needs to see all of it
+      gd.missSince = gd.missSince || now;
+      if (!top && now - gd.missSince > 3500 && now - (gd.hintAt || 0) > 9000) { gd.hintAt = now; toast("Step back a little, so the whole garment is in view", 3200); }
+    }
+    if (top && top.p >= 0.68) gd.missSince = 0;
     gdLabel();
     schedule();
   });
 }
+const boxIoU = (a, b) => { const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), i = ix * iy;
+  return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i + 1e-9); };
 function gdLabel() {
   const el = $("tSub"); if (!el || S.step !== 3) return;
   el.textContent = gd.det ? GD_NAMES[gd.det.name] + " found" : (cam.on && cam.useLive && !gd.failed ? "Point at a garment" : "Point at clothes");
@@ -2520,8 +2543,8 @@ function drawCameraInto(R, V) {
     tx = B.x + B.w / 2 - (x0 + x1) / 2 * vw * tk; ty = B.y + B.h / 2 - (y0 + y1) / 2 * vh * tk;
   }
   const v = gd.view || (gd.view = { k: tk, x: tx, y: ty });
-  if (!cam.frozen) { const a = 0.14; v.k += (tk - v.k) * a; v.x += (tx - v.x) * a; v.y += (ty - v.y) * a; }   // glide, never jump
-  gd.settled = Math.abs(tk - v.k) < tk * 0.03 && Math.abs(tx - v.x) < W * 0.02 && Math.abs(ty - v.y) < H * 0.02;
+  if (!cam.frozen) { const a = 0.2; v.k += (tk - v.k) * a; v.x += (tx - v.x) * a; v.y += (ty - v.y) * a; }   // glide, never jump
+  gd.settled = Math.abs(tk - v.k) < tk * 0.06 && Math.abs(tx - v.x) < W * 0.04 && Math.abs(ty - v.y) < H * 0.04;
   const k = v.k, w = vw * k, h = vh * k, x = v.x, y = v.y;
   bg.save(); bg.imageSmoothingQuality = "high";
   if (V.light && !cam.torch) bg.filter = "brightness(1.18) contrast(1.04)";
@@ -2709,8 +2732,15 @@ $("getStarted").addEventListener("click", () => {
   if (S.set.style) go(); else askStyle(go);
 });
 
+function gdPreload() {
+  const w = gdWorker(); if (!w || gd.ready || gd.preloading) return;
+  gd.preloading = true; gd.busy = true;
+  w.onmessage = (e) => { gd.busy = false; if (e.data.cmd === "error") { gd.failed = true; return; } gd.ready = true; };
+  w.postMessage({ cmd: "load", base: "" });
+}
 function setStep(n) {
   S.step = n;
+  if (n >= 2) setTimeout(gdPreload, 400);
   if (S.paused && n !== 3) setPaused(false);
   if (n !== 1 && cap.on) stopCapture();
   if (n !== 3) openDock(false, true);
@@ -3554,7 +3584,7 @@ $("aiRetry").addEventListener("click", async () => {
   $("aiMsg").textContent = "Loading body detection…";
   if (await startAI()) { if (S.photo && !S.A) await analyzeNow(); mainCache.key = null; schedule(); renderPage(S.tab); toast("Body detection ready", 1600); }
 });
-window.__tf = S; S.dbg = { bodyMap, mc: () => mainCache, realMask, drawShape, frameOf, freeFrame, personBox, layout, mainView, parser, partsMask, get aim() { return aim; } };
+window.__tf = S; S.dbg = { gd, steady, bodyMap, mc: () => mainCache, realMask, drawShape, frameOf, freeFrame, personBox, layout, mainView, parser, partsMask, get aim() { return aim; } };
 (async () => {
   show("splash");
   for (const ex of EXAMPLES) S.items.set(ex.id, { ...ex, user: false, created: 0 });
