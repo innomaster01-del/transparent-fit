@@ -2052,6 +2052,7 @@ async function startCamera() {
     await v.play();
     cam.stream = stream; cam.on = true; cam.err = null; cam.frozen = null;
     updateLiveUI(); camLoop();
+    if (!cam.hinted) { cam.hinted = true; setTimeout(() => toast("Hold the phone so the garment fills the cut-out. Pinch to zoom.", 3600), 600); }
     return true;
   } catch (e) { console.warn(e); cam.err = e && e.name || "error"; cam.on = false; updateLiveUI(); explainNoCamera(); return false; }
 }
@@ -2281,6 +2282,30 @@ function autoCapture(g, now) {
     toast("Got it. Save it, or tap Next for the next garment.", 2800);
   }, 0);
 }
+const steady = { at: 0, prev: null, still: 0, moved: false, small: null };
+function steadyWatch(f, vw, vh) {
+  const now = performance.now(); if (now - steady.at < 110) return; steady.at = now;
+  const c = steady.small || (steady.small = mkc(32, 32)), g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(f, vw * 0.2, vh * 0.2, vw * 0.6, vh * 0.6, 0, 0, 32, 32);
+  const d = g.getImageData(0, 0, 32, 32).data, cur = new Float32Array(1024);
+  let mean = 0, varc = 0;
+  for (let i = 0; i < 1024; i++) { cur[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; mean += cur[i]; }
+  mean /= 1024; for (let i = 0; i < 1024; i++) varc += (cur[i] - mean) ** 2; varc /= 1024;
+  let rms = 99;
+  if (steady.prev) { let s = 0; for (let i = 0; i < 1024; i++) s += (cur[i] - steady.prev[i]) ** 2; rms = Math.sqrt(s / 1024); }
+  steady.prev = cur;
+  if (rms > 14) { steady.moved = true; steady.still = 0; return; }
+  if (rms < 6) steady.still++; else steady.still = 0;
+  if (S.set.auto === "off" || S.paused || S.step !== 3 || !cam.on || !cam.useLive || now < (aim.cool || 0)) return;
+  // still for ~0.7 s after moving, with something in view (not a blank wall)
+  if (steady.moved && steady.still >= 6 && varc > 60) {
+    steady.moved = false; steady.still = 0;
+    setPaused(true, true);
+    const fl = $("flash"); fl.classList.remove("go"); void fl.offsetWidth; fl.classList.add("go");
+    try { navigator.vibrate && navigator.vibrate(30); } catch {}
+    toast("Got it. Save it, or tap Next for the next garment.", 2800);
+  }
+}
 function aimAt(f, vw, vh) {
   const now = performance.now();
   if (now - aim.at > 120 || !aim.box) {
@@ -2390,65 +2415,25 @@ function mirrorShape(s) {
     sleeves: s.sleeves && s.sleeves.map((q) => q && { ...q, side: -q.side, a: m(q.a), b: m(q.b) }),
     legs: s.legs && s.legs.map((q) => ({ ...q, a: m(q.a), b: m(q.b) })).reverse() };
 }
+/** The camera as a window: its picture fills the screen behind your photo, like a camera preview, and the
+ *  cut-out shows exactly what is behind it. Nothing is detected or warped, so it never jumps or smears:
+ *  you move the phone until the garment fills the cut-out (pinch to zoom). */
 function drawCameraInto(R, V) {
   const f = camFrame(), vw = f.videoWidth || f.width, vh = f.videoHeight || f.height;
-  const b = R.buf, bg = b.getContext("2d");
-  bg.globalCompositeOperation = "source-over"; bg.clearRect(0, 0, b.width, b.height);
-  const mirror = false;                 // the garment is shown as it is: its print reads the right way round
-  const G = aimAt(f, vw, vh), z = (cam.zoom || 1);
-  // the garment's inside lands exactly on the piece; stretch at most a quarter in either direction
-  let kx = R.box.w / (G.w * vw), ky = R.box.h / (G.h * vh);
-  if (kx > ky * 1.12) ky = kx / 1.12; else if (ky > kx * 1.12) kx = ky / 1.12;   // the fabric keeps its proportions
-  kx *= z; ky *= z;
-  const w = vw * kx, h = vh * ky;
-  const gcx = mirror ? 1 - (G.x + G.w / 2) : G.x + G.w / 2, gcy = G.y + G.h / 2;
-  const x = R.box.x + R.box.w / 2 - gcx * w, y = R.box.y + R.box.h / 2 - gcy * h;
-  bg.save();
-  if (V.light && !cam.torch) bg.filter = "brightness(1.22) contrast(1.04)";
+  const b = R.buf, bg = b.getContext("2d"), W = b.width, H = b.height;
+  bg.globalCompositeOperation = "source-over"; bg.clearRect(0, 0, W, H);
+  const mirror = cam.facing === "user", z = Math.max(1, Math.min(4, cam.zoom || 1));
+  const k = Math.max(W / vw, H / vh) * z, w = vw * k, h = vh * k, x = (W - w) / 2, y = (H - h) / 2;
+  bg.save(); bg.imageSmoothingQuality = "high";
+  if (V.light && !cam.torch) bg.filter = "brightness(1.18) contrast(1.04)";
   if (mirror) { bg.translate(x + w, y); bg.scale(-1, 1); bg.drawImage(f, 0, 0, w, h); } else bg.drawImage(f, x, y, w, h);
   bg.restore();
-  // the garment's own parts onto yours, when the whole garment was in view
-  const shape = aim.shape;
-  cam.fitted = false;
-  if (R.fit && shape && S.set.fit !== "off") {
-    const sw0 = Math.min(720, vw), sh0 = Math.round(sw0 * vh / vw);
-    const sb = cam.srcBuf && cam.srcBuf.width === sw0 && cam.srcBuf.height === sh0 ? cam.srcBuf : (cam.srcBuf = mkc(sw0, sh0)), sg = sb.getContext("2d");
-    sg.globalCompositeOperation = "source-over"; sg.clearRect(0, 0, sw0, sh0); sg.drawImage(f, 0, 0, sw0, sh0);
-    // only the garment itself, not the wall behind it: its outline becomes the picture's alpha
-    if (shape.mask) {
-      const mc = cam.maskBuf && cam.maskBuf.width === shape.SW && cam.maskBuf.height === shape.SH ? cam.maskBuf : (cam.maskBuf = mkc(shape.SW, shape.SH));
-      const mg = mc.getContext("2d"), id = mg.createImageData(shape.SW, shape.SH);
-      for (let i = 0; i < shape.mask.length; i++) id.data[i * 4 + 3] = shape.mask[i] ? 255 : 0;
-      mg.putImageData(id, 0, 0);
-      sg.globalCompositeOperation = "destination-in"; sg.imageSmoothingEnabled = true; sg.filter = `blur(${(sw0 / shape.SW * 0.6).toFixed(1)}px)`; sg.drawImage(mc, 0, 0, sw0, sh0); sg.filter = "none"; sg.globalCompositeOperation = "source-over";   // soft, not stair-stepped
-    }
-    const fb = R.fitBuf || (R.fitBuf = mkc(b.width, b.height)), fg2 = fb.getContext("2d");
-    fg2.globalCompositeOperation = "source-over"; fg2.clearRect(0, 0, fb.width, fb.height);
-    fg2.save(); if (V.light && !cam.torch) fg2.filter = "brightness(1.22) contrast(1.04)";
-    try { cam.fitted = drawFitted(fg2, sb, shape, R.fit); } catch (e) { console.warn(e); }
-    fg2.restore();
-    if (cam.fitted) {
-      if (R.shade) { fg2.globalCompositeOperation = "source-atop"; fg2.globalAlpha = 0.28; fg2.drawImage(R.shade, 0, 0); fg2.globalAlpha = 1; }
-      if (R.person && R.own) {
-        // under the new garment: your old garment hidden by fabric, bare skin left as it is in the photo
-        const tmp = R.tmpBuf || (R.tmpBuf = mkc(b.width, b.height)), tg = tmp.getContext("2d");
-        tg.globalCompositeOperation = "source-over"; tg.clearRect(0, 0, tmp.width, tmp.height); tg.drawImage(b, 0, 0);
-        tg.globalCompositeOperation = "destination-in"; tg.drawImage(R.own, 0, 0);
-        bg.globalCompositeOperation = "source-over"; bg.clearRect(0, 0, b.width, b.height);
-        bg.drawImage(R.person, 0, 0); bg.drawImage(tmp, 0, 0);
-      }
-      bg.drawImage(fb, 0, 0);
-      // the garment reaches past your own (a crew neck over a scoop neck, a longer hem): it is drawn over
-      // the photo there too, except where your face, hair, hands or arms are in front of it
-      if (R.protect) { fg2.globalCompositeOperation = "destination-out"; fg2.drawImage(R.protect, 0, 0); }
-      fg2.globalCompositeOperation = "source-over";
-    }
-  }
-  if (R.shade) { bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = 0.28; bg.drawImage(R.shade, 0, 0); bg.globalAlpha = 1; }
+  if (R.shade) { bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = 0.22; bg.drawImage(R.shade, 0, 0); bg.globalAlpha = 1; }
   bg.globalCompositeOperation = "destination-in"; bg.drawImage(R.mask, 0, 0);
   bg.globalCompositeOperation = "source-over";
   cam.map = { x, y, w, h, vw, vh, mirror };
-  R.over = cam.fitted ? R.fitBuf : null;
+  R.over = null;
+  steadyWatch(f, vw, vh);
   return b;
 }
 function updateLiveUI() {
@@ -2462,6 +2447,7 @@ function updateLiveUI() {
 $("tCam").addEventListener("click", () => {
   cam.useLive = !cam.useLive; mainCache.key = null;
   if (S.paused) setPaused(false);
+  if (cam.useLive) cam.zoom = 1;
   toast(cam.useLive ? "Live camera" : "Your wardrobe", 1200);
   updateLiveUI(); renderTryOn();
 });
@@ -2684,7 +2670,7 @@ function setPaused(on, captured) {
   if (on && !S.paused) cam.frozen = null;
   S.paused = on; S.captured = !!(on && captured);
   $("tPause").setAttribute("aria-pressed", String(on));
-  if (!on) { cam.frozen = null; aim.cool = performance.now() + 2500; if (aim.hist) aim.hist.length = 0; }
+  if (!on) { cam.frozen = null; aim.cool = performance.now() + 1500; if (aim.hist) aim.hist.length = 0; steady.moved = false; steady.still = 0; }
   else if (!cam.frozen && camFrame()) { const f = camFrame(), c = mkc(f.videoWidth, f.videoHeight); c.getContext("2d").drawImage(f, 0, 0); cam.frozen = c; }
   $("pauseIc").innerHTML = on ? '<path d="M8 5.5v13l10-6.5-10-6.5Z" fill="currentColor"/>' : '<path d="M8.5 5.5v13M15.5 5.5v13" stroke-width="3.2"/>';
   $("capBar").hidden = !S.captured; $("tTools").hidden = S.captured;
@@ -3302,7 +3288,9 @@ cv.addEventListener("pointerdown", (e) => {
   const p = partAt(e); if (!p) return;
   const picked = S.activeSlot !== p.slot;
   if (picked) { S.activeSlot = p.slot; updateThumb(); schedule(); }
-  if (cam.on && cam.useLive) {                     // live: a tap on the picture captures it (or first picks the piece, in a full outfit)
+  if (cam.on && cam.useLive) {                     // live: a tap captures (or first picks the piece); two fingers zoom the camera
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); cv.setPointerCapture(e.pointerId);
+    if (pts.size > 1) { tap = null; return; }
     if (!picked) tap = { x: e.clientX, y: e.clientY, t: performance.now() };
     return;
   }
@@ -3310,6 +3298,12 @@ cv.addEventListener("pointerdown", (e) => {
   drag = { id: S.wear[p.slot], R: p.R }; cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
 });
 cv.addEventListener("pointermove", (e) => {
+  if (pts.has(e.pointerId) && !drag && cam.on && cam.useLive) {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) { const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch) { cam.zoom = Math.min(4, Math.max(1, (cam.zoom || 1) * d / pinch)); renderTryOn(); } pinch = d; }
+    return;
+  }
   if (!pts.has(e.pointerId) || !drag) return;
   const prev = pts.get(e.pointerId), f = fitOf(drag.id);
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
